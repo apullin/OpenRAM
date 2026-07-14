@@ -64,6 +64,106 @@ num_pex_runs = 0
 #     (outfile, errfile, resultsfile) = run_script(cell_name, "filter")
 
 
+def _write_gds_read_commands(f, cell_name, gds_name):
+    """ The GDS read preamble shared by the magic sessions: reading the
+    GDS directly is cheap (seconds) and, unlike a shared .mag view,
+    involves no cell files or file locks, so independent sessions can
+    run concurrently. """
+    f.write("drc off\n")
+    f.write("set VDD vdd\n")
+    f.write("set GND gnd\n")
+    f.write("set SUB gnd\n")
+    f.write("gds warning default\n")
+    try:
+        from openram.tech import flatglob
+    except ImportError:
+        flatglob = []
+        f.write("gds readonly true\n")
+    for entry in flatglob:
+        f.write("gds flatglob " + entry + "\n")
+    f.write("gds flatten true\n")
+    f.write("gds ordering true\n")
+    f.write("gds read {}\n".format(gds_name))
+    f.write('puts "Finished reading gds {}"\n'.format(gds_name))
+    f.write("load {}\n".format(cell_name))
+    f.write('puts "Finished loading cell {}"\n'.format(cell_name))
+    f.write("cellname delete \\(UNNAMED\\)\n")
+
+
+def write_drc_lvs_scripts(cell_name, gds_name, sp_name, final_verification, output_path):
+    """ Write independent extraction and DRC scripts that each read the
+    GDS themselves (no shared .mag view), so they can run concurrently.
+    """
+    global OPTS
+
+    full_magic_file = os.environ.get('OPENRAM_MAGICRC', None)
+    if not full_magic_file:
+        full_magic_file = OPTS.openram_tech + "tech/.magicrc"
+    if os.path.exists(full_magic_file):
+        shutil.copy(full_magic_file, output_path + "/.magicrc")
+    else:
+        debug.warning("Could not locate .magicrc file: {}".format(full_magic_file))
+
+    # Extraction session: GDS read + extract + ext2spice for LVS.
+    run_file = output_path + "run_extract.sh"
+    f = open(run_file, "w")
+    f.write("#!/bin/sh\n")
+    f.write('export OPENRAM_TECH="{}"\n'.format(os.environ['OPENRAM_TECH']))
+    f.write('echo "$(date): Starting extraction using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write('\n')
+    f.write("{} -dnull -noconsole << EOF\n".format(OPTS.drc_exe[1]))
+    _write_gds_read_commands(f, cell_name, gds_name)
+    _write_extract_commands(f, cell_name, sp_name, True, final_verification)
+    f.write("quit -noprompt\n")
+    f.write("EOF\n")
+    f.write("magic_retcode=$?\n")
+    f.write('echo "$(date): Finished ($magic_retcode) extraction using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write("exit $magic_retcode\n")
+    f.close()
+    os.system("chmod u+x {}".format(run_file))
+
+    # DRC session: GDS read + drc check (same commands as the .mag-view
+    # DRC script after its load).
+    try:
+        from openram.tech import blackbox_cells
+    except ImportError:
+        blackbox_cells = []
+    run_file = output_path + "run_drc.sh"
+    f = open(run_file, "w")
+    f.write("#!/bin/sh\n")
+    f.write('export OPENRAM_TECH="{}"\n'.format(os.environ['OPENRAM_TECH']))
+    for blackbox_cell_name in blackbox_cells:
+        mag_file = OPTS.openram_tech + "maglef_lib/" + blackbox_cell_name + ".mag"
+        debug.check(os.path.isfile(mag_file), "Could not find blackbox cell {}".format(mag_file))
+        f.write('cp {0} .\n'.format(mag_file))
+    f.write('echo "$(date): Starting DRC using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write('\n')
+    f.write("{} -dnull -noconsole << EOF\n".format(OPTS.drc_exe[1]))
+    _write_gds_read_commands(f, cell_name, gds_name)
+    # The read preamble disables the background checker for speed;
+    # re-enable it for the check.
+    f.write("drc on\n")
+    f.write("select top cell\n")
+    f.write("expand\n")
+    f.write('puts "Finished expanding"\n')
+    f.write("drc euclidean on\n")
+    # Workaround to address DRC CIF style not loading if 'drc check' is run before catchup
+    if OPTS.tech_name=="gf180mcu":
+      f.write("drc catchup\n")
+    f.write("drc check\n")
+    f.write('puts "Finished drc check"\n')
+    f.write("drc catchup\n")
+    f.write('puts "Finished drc catchup"\n')
+    f.write("drc count total\n")
+    f.write("quit -noprompt\n")
+    f.write("EOF\n")
+    f.write("magic_retcode=$?\n")
+    f.write('echo "$(date): Finished ($magic_retcode) DRC using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write("exit $magic_retcode\n")
+    f.close()
+    os.system("chmod u+x {}".format(run_file))
+
+
 def _write_extract_commands(f, cell_name, sp_name, extract, final_verification, pre=""):
     """ The extraction + ext2spice command block shared by the combined
     and split ext scripts. """
@@ -275,23 +375,23 @@ def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=
 
 
 def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
-    """Run DRC and LVS together: one GDS read/extraction, then the Magic
-    DRC and Netgen LVS scripts concurrently (DRC needs the written .mag
-    view, LVS needs the extracted .spice; they are independent).
-    NOTE: DRC cannot overlap the extraction itself — concurrent Magic
-    sessions fight over .mag file locks (this Magic has no -nolock). """
+    """Run DRC and LVS together. The Magic DRC and Magic extraction
+    sessions each read the GDS themselves (cheap) instead of sharing a
+    .mag view (whose cell files are lock-contended), so they run fully
+    concurrently; Netgen LVS follows the extracted netlist. """
 
     global num_drc_runs
     global num_lvs_runs
     num_drc_runs += 1
     num_lvs_runs += 1
 
-    write_drc_script(cell_name, gds_name, True, final_verification, OPTS.openram_temp, sp_name=sp_name)
+    write_drc_lvs_scripts(cell_name, gds_name, sp_name, final_verification, OPTS.openram_temp)
     write_lvs_script(cell_name, gds_name, sp_name, final_verification)
 
-    run_script(cell_name, "ext")
-
     drc_handle = start_script(cell_name, "drc")
+    extract_handle = start_script(cell_name, "extract")
+    wait_script(extract_handle)
+    # LVS needs the extracted netlist.
     lvs_handle = start_script(cell_name, "lvs")
     (drc_outfile, drc_errfile, drc_resultsfile) = wait_script(drc_handle)
     (lvs_outfile, lvs_errfile, lvs_resultsfile) = wait_script(lvs_handle)
