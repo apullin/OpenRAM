@@ -265,16 +265,11 @@ class graph:
     def build_bbox_trees(self):
         """ Build bbox trees for blockages and vias in the routing region. """
 
-        # Bbox tree for blockages
-        self.blockage_bbox_tree = bbox_node(bbox(self.graph_blockages[0]))
-        for i in range(1, len(self.graph_blockages)):
-            self.blockage_bbox_tree.insert(bbox(self.graph_blockages[i]))
-        # Bbox tree for vias
-        if len(self.graph_vias) == 0:
-            return
-        self.via_bbox_tree = bbox_node(bbox(self.graph_vias[0]))
-        for i in range(1, len(self.graph_vias)):
-            self.via_bbox_tree.insert(bbox(self.graph_vias[i]))
+        blockage_boxes = [bbox(shape) for shape in self.graph_blockages]
+        self.blockage_bbox_tree = bbox_node.build(blockage_boxes)
+        if self.graph_vias:
+            via_boxes = [bbox(shape) for shape in self.graph_vias]
+            self.via_bbox_tree = bbox_node.build(via_boxes)
 
 
     def generate_cartesian_values(self):

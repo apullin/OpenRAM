@@ -154,6 +154,50 @@ class graph_test(openram_test):
             self.assertEqual(root.get_costs(inserted_bbox), (20, 28, 16))
         self.assertEqual(len(area_calls), 7)
 
+        tree_shapes = [
+            shape("tree_0", (-3, -1), (-1, 1)),
+            shape("tree_1", (0, 0), (2, 2)),
+            shape("tree_2", (2, 2), (4, 4)),
+            shape("tree_3", (1, -2), (3, -1)),
+            shape("tree_4", (5, 0), (6, 3)),
+        ]
+        tree_boxes = [router_bbox(item) for item in tree_shapes]
+        tree_boxes.append(tree_boxes[1])
+        incremental = bbox_node(tree_boxes[0])
+        for item in tree_boxes[1:]:
+            incremental.insert(item)
+
+        merge_calls = []
+        original_merge = router_bbox.merge
+
+        def counted_merge(item, other):
+            merge_calls.append((item, other))
+            return original_merge(item, other)
+
+        with patch.object(bbox_node, "get_costs",
+                          side_effect=AssertionError("bulk build used insertion costs")):
+            with patch.object(router_bbox, "merge", counted_merge):
+                bulk = bbox_node.build(tree_boxes)
+        self.assertEqual(len(merge_calls), len(tree_boxes) - 1)
+        self.assertIsNone(bbox_node.build([]))
+        self.assertIs(bbox_node.build([tree_boxes[0]]).bbox, tree_boxes[0])
+
+        def result_ids(items):
+            return sorted(id(item) for item in items)
+
+        for point in [vector(-3, -1), vector(1, 1),
+                      vector(2, 2), vector(10, 10)]:
+            self.assertEqual(result_ids(bulk.iterate_point(point)),
+                             result_ids(incremental.iterate_point(point)))
+        query_shapes = [
+            shape("query_0", (1.5, 1.5), (2.5, 2.5)),
+            shape("query_1", (-4, -2), (-3, -1)),
+            shape("query_2", (8, 8), (9, 9)),
+        ]
+        for query in query_shapes:
+            self.assertEqual(result_ids(bulk.iterate_shape(query)),
+                             result_ids(incremental.iterate_shape(query)))
+
         original_drc = graph_utils.tech.drc
         try:
             graph_utils.tech.drc = {"grid": 0.005}

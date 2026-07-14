@@ -63,6 +63,46 @@ class bbox_node:
                     yield from self.right.iterate_shape(shape, True)
 
 
+    @classmethod
+    def build(cls, boxes):
+        """Build a deterministic, balanced bbox tree."""
+
+        if not boxes:
+            return None
+        indexed = list(enumerate(boxes))
+
+        def centroid(item, axis):
+            _index, box = item
+            ll, ur = box.rect
+            return ll[axis] + ur[axis]
+
+        def build_items(items):
+            if len(items) == 1:
+                return cls(items[0][1])
+
+            x_centers = [centroid(item, 0) for item in items]
+            y_centers = [centroid(item, 1) for item in items]
+            x_span = max(x_centers) - min(x_centers)
+            y_span = max(y_centers) - min(y_centers)
+            axis = int(y_span > x_span)
+            other_axis = 1 - axis
+
+            def sort_key(item):
+                index, box = item
+                ll, ur = box.rect
+                return (centroid(item, axis),
+                        centroid(item, other_axis),
+                        ll.x, ll.y, ur.x, ur.y, index)
+
+            ordered = sorted(items, key=sort_key)
+            middle = len(ordered) // 2
+            left = build_items(ordered[:middle])
+            right = build_items(ordered[middle:])
+            return cls(left.bbox.merge(right.bbox), left, right)
+
+        return build_items(indexed)
+
+
     def get_costs(self, bbox):
         """ Return the costs of bbox nodes after merging the given bbox. """
 
