@@ -88,6 +88,12 @@ class router(router_tech):
         # NOTE: Avoid using this function if possible since it is too slow to
         # write/read these files
         self.design.gds_write(self.gds_filename)
+        if getattr(OPTS, "use_rust_router", False):
+            from .rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from .rust_gds import rust_layout
+                self.layout = rust_layout(self.gds_filename, units=GDS["unit"])
+                return
         self.layout = gdsMill.VlsiLayout(units=GDS["unit"])
         self.reader = gdsMill.Gds2reader(self.layout)
         self.reader.loadFromFile(self.gds_filename)

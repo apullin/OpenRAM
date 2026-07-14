@@ -23,9 +23,9 @@ pub struct Rect {
 pub struct Boundary {
     pub layer: i16,
     pub purpose: i16,
-    /// First and third coordinate pair (gdsMill uses coordinates[0]/[2]).
-    pub c0: (f64, f64),
-    pub c2: (f64, f64),
+    /// All coordinate pairs. gdsMill treats a 5-point boundary as a
+    /// rectangle (corners [0] and [2]) and anything else as a polygon.
+    pub coords: Vec<(f64, f64)>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +60,8 @@ pub struct Layout {
     /// user units per database unit (GDS UNITS record, first value)
     pub user_unit: f64,
     pub root: Option<usize>,
+    /// Layer numbers in first-seen order (gdsMill layerNumbersInUse).
+    pub layers_in_use: Vec<i16>,
 }
 
 // Record types
@@ -158,7 +160,14 @@ impl Layout {
                     el_mirror = false;
                     el_angle = 0.0;
                 }
-                LAYER => el_layer = be_i16(p),
+                LAYER => {
+                    el_layer = be_i16(p);
+                    if (el_kind == BOUNDARY || el_kind == TEXT)
+                        && !layout.layers_in_use.contains(&el_layer)
+                    {
+                        layout.layers_in_use.push(el_layer);
+                    }
+                }
                 DATATYPE | TEXTTYPE => el_purpose = be_i16(p),
                 XY => {
                     el_xy.clear();
@@ -192,8 +201,7 @@ impl Layout {
                                     s.boundaries.push(Boundary {
                                         layer: el_layer,
                                         purpose: el_purpose,
-                                        c0: el_xy[0],
-                                        c2: el_xy[2],
+                                        coords: el_xy.clone(),
                                     });
                                 }
                             }
@@ -331,9 +339,14 @@ impl Layout {
 
     /// getAllShapes(lpp) over the flattened hierarchy, in user units.
     /// A purpose of -1 matches any datatype (None purpose in Python).
-    pub fn get_all_shapes(&self, layer: i16, purpose: i16) -> Vec<Rect> {
+    /// Rectangles are 4 values [llx, lly, urx, ury]; other boundaries are
+    /// returned as flattened transformed point lists, exactly like gdsMill.
+    /// Shapes are deduplicated preserving first-insertion order, then
+    /// converted to user units (matching getAllShapes' op order).
+    pub fn get_all_shapes(&self, layer: i16, purpose: i16) -> Vec<Vec<f64>> {
         let unit = self.user_unit;
-        let mut rects = Vec::new();
+        let mut seen: std::collections::HashSet<Vec<u64>> = std::collections::HashSet::new();
+        let mut shapes: Vec<Vec<f64>> = Vec::new();
         for p in self.flatten() {
             for b in &self.structures[p.struct_index].boundaries {
                 if b.layer != layer {
@@ -342,24 +355,47 @@ impl Layout {
                 if purpose >= 0 && b.purpose >= 0 && b.purpose != purpose {
                     continue;
                 }
-                // transformRectangle: transform both corners, re-sort.
-                let t0 = transform_point(b.c0, p);
-                let t2 = transform_point(b.c2, p);
-                rects.push(Rect {
-                    llx: t0.0.min(t2.0) * unit,
-                    lly: t0.1.min(t2.1) * unit,
-                    urx: t0.0.max(t2.0) * unit,
-                    ury: t0.1.max(t2.1) * unit,
-                });
+                let shape: Vec<f64> = if b.coords.len() != 5 {
+                    // Polygon: transform every point, then add the origin.
+                    let mut vals = Vec::with_capacity(b.coords.len() * 2);
+                    for &c in &b.coords {
+                        let t = rotate_scale_point(c, p);
+                        vals.push(t.0 + p.origin.0);
+                        vals.push(t.1 + p.origin.1);
+                    }
+                    vals
+                } else {
+                    // transformRectangle: transform corners 0 and 2, sort,
+                    // then add the origin.
+                    let t0 = rotate_scale_point(b.coords[0], p);
+                    let t2 = rotate_scale_point(b.coords[2], p);
+                    vec![
+                        t0.0.min(t2.0) + p.origin.0,
+                        t0.1.min(t2.1) + p.origin.1,
+                        t0.0.max(t2.0) + p.origin.0,
+                        t0.1.max(t2.1) + p.origin.1,
+                    ]
+                };
+                // Python dict keys treat 0.0 and -0.0 as equal.
+                let key: Vec<u64> = shape
+                    .iter()
+                    .map(|v| (if *v == 0.0 { 0.0f64 } else { *v }).to_bits())
+                    .collect();
+                if seen.insert(key) {
+                    shapes.push(shape);
+                }
             }
         }
-        rects
+        for shape in &mut shapes {
+            for v in shape.iter_mut() {
+                *v *= unit;
+            }
+        }
+        shapes
     }
 }
 
-fn transform_point(pt: (f64, f64), p: Placement) -> (f64, f64) {
-    (
-        pt.0 * p.u.0 + pt.1 * p.v.0 + p.origin.0,
-        pt.0 * p.u.1 + pt.1 * p.v.1 + p.origin.1,
-    )
+/// transformCoordinate: rotate/scale only (origin added by the caller).
+fn rotate_scale_point(pt: (f64, f64), p: Placement) -> (f64, f64) {
+    (pt.0 * p.u.0 + pt.1 * p.v.0, pt.0 * p.u.1 + pt.1 * p.v.1)
 }
