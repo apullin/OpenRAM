@@ -87,9 +87,63 @@ fn snap(x: f64, ndigits: usize) -> f64 {
     openram_core::snap::py_round(x, ndigits)
 }
 
+/// GDSII layout reader + hierarchy flattener (gdsMill VlsiLayout subset).
+#[pyclass]
+struct GdsLayout {
+    layout: openram_core::gds::Layout,
+}
+
+#[pymethods]
+impl GdsLayout {
+    #[new]
+    fn new(path: &str) -> PyResult<Self> {
+        let data = std::fs::read(path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+        let layout = openram_core::gds::Layout::parse(&data)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(GdsLayout { layout })
+    }
+
+    fn root_name(&self) -> Option<String> {
+        self.layout
+            .root
+            .map(|i| self.layout.structures[i].name.clone())
+    }
+
+    /// Per-structure element counts (debug/diff aid):
+    /// (boundaries_on_layer, total_boundaries, srefs, texts)
+    fn struct_counts(&self, name: &str, layer: i16) -> (usize, usize, usize, usize) {
+        match self.layout.index.get(name) {
+            Some(&i) => {
+                let s = &self.layout.structures[i];
+                (
+                    s.boundaries.iter().filter(|b| b.layer == layer).count(),
+                    s.boundaries.len(),
+                    s.srefs.len(),
+                    s.texts.len(),
+                )
+            }
+            None => (usize::MAX, 0, 0, 0),
+        }
+    }
+
+    /// Flattened boundaries on (layer, purpose) in user units;
+    /// purpose < 0 matches any datatype.
+    fn get_all_shapes(&self, py: Python<'_>, layer: i16, purpose: i16) -> Vec<(f64, f64, f64, f64)> {
+        py.detach(|| {
+            self.layout
+                .get_all_shapes(layer, purpose)
+                .iter()
+                .map(|r| (r.llx, r.lly, r.urx, r.ury))
+                .collect()
+        })
+    }
+}
+
 #[pymodule]
 fn openram_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
+    m.add_class::<GdsLayout>()?;
     m.add_function(wrap_pyfunction!(snap, m)?)?;
     Ok(())
 }
