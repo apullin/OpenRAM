@@ -45,12 +45,12 @@ OPTS.top_process = 'openram'
 # These depend on arguments, so don't load them until now.
 from openram import debug
 
-for config_file in args:
+def compile_config(config_file, print_banner):
     # Parse config file and set up all the options
     openram.init_openram(config_file=config_file)
 
     # Only print banner here so it's not in unit tests
-    if config_file is args[0]:
+    if print_banner:
         openram.print_banner()
 
     # Ensure that the right bitcell exists or use the parameterised one
@@ -87,3 +87,26 @@ for config_file in args:
     # Delete temp files etc.
     openram.end_openram()
     openram.print_time("End", datetime.datetime.now(), start_time)
+
+
+failed = []
+for config_file in args:
+    if len(args) == 1:
+        # Single config: fail exactly like before.
+        compile_config(config_file, print_banner=True)
+    else:
+        # Batched configs must not take the rest of the batch down with
+        # them; init_openram restores pristine state for the next one.
+        try:
+            compile_config(config_file, print_banner=(config_file is args[0]))
+        except KeyboardInterrupt:
+            raise
+        except (Exception, SystemExit, AssertionError) as e:
+            failed.append(config_file)
+            print("FAILED: {} ({}: {})".format(config_file,
+                                               type(e).__name__, e))
+
+if failed:
+    print("{} of {} configs failed: {}".format(len(failed), len(args),
+                                               " ".join(failed)))
+    sys.exit(1)
