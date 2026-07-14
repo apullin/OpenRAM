@@ -156,19 +156,22 @@ class graph:
         return blocked
 
 
-    def is_via_blocked(self, nodes):
-        """ Return if a via on the given point is blocked by another via. """
+    def is_via_blocked(self, nodes, check_blockages=True):
+        """ Return if a via on the given point is blocked. """
 
         # If the nodes are blocked by a blockage other than a via
-        for node in nodes:
-            if self.is_node_blocked(node):
-                return True
+        if check_blockages:
+            for node in nodes:
+                if self.is_node_blocked(node):
+                    return True
 
         # Skip if no via is present
         if len(self.graph_vias) == 0:
             return False
 
         # If the nodes are blocked by a via
+        if not check_blockages:
+            node = nodes[-1]
         x = node.center.x
         y = node.center.y
         z = node.center.z
@@ -351,7 +354,8 @@ class graph:
             search(i, lambda count: (count / 2) >= y_len, y_len * 2) # Left
             if not self.nodes[i].remove and \
                not self.nodes[i + 1].remove and \
-               not self.is_via_blocked(self.nodes[i:i+2]):
+               not self.is_via_blocked(self.nodes[i:i+2],
+                                       check_blockages=False):
                 self.nodes[i].add_neighbor(self.nodes[i + 1])
 
         # Remove marked nodes

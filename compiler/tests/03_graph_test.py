@@ -85,6 +85,27 @@ class graph_test(openram_test):
         self.assertNotIn(removed, left.neighbors)
         self.assertNotIn(removed, right.neighbors)
 
+        via_nodes = [graph_node((0, 0, 0)), graph_node((0, 0, 1))]
+        route_graph.graph_vias = []
+        with patch.object(route_graph, "is_node_blocked",
+                          side_effect=AssertionError("nodes already checked")):
+            self.assertFalse(route_graph.is_via_blocked(
+                via_nodes, check_blockages=False))
+        with patch.object(route_graph, "is_node_blocked",
+                          return_value=True) as is_node_blocked:
+            self.assertTrue(route_graph.is_via_blocked(via_nodes))
+            is_node_blocked.assert_called_once_with(via_nodes[0])
+
+        route_graph.graph_vias = [object()]
+        route_graph.via_bbox_tree = SimpleNamespace(
+            iterate_point=lambda _point: ())
+        with patch.object(route_graph, "is_node_blocked", return_value=False):
+            self.assertFalse(route_graph.is_via_blocked(iter(via_nodes)))
+        with patch.object(route_graph, "is_node_blocked",
+                          side_effect=AssertionError("nodes already checked")):
+            self.assertFalse(route_graph.is_via_blocked(
+                via_nodes, check_blockages=False))
+
         class containment_shape(graph_shape):
             def __eq__(self, _other):
                 raise AssertionError("contains must not call equality")
