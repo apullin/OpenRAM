@@ -207,6 +207,7 @@ class spice():
 
         ordered_nets = self.create_nets(ordered_args)
         self.insts[-1].connect_spice_pins(ordered_nets)
+        self._inst_conns_cache = None
 
     def create_nets(self, names_list):
         nets = []
@@ -703,10 +704,16 @@ class spice():
         return aliases
 
     def get_instance_connections(self):
-        conns = []
-        for inst in self.insts:
-            if "contact" not in inst.name:
-                conns.append(inst.get_connections())
+        # Cached: net-alias searches re-enter modules many times and the
+        # connection names are fixed once instances are connected
+        # (connect_inst invalidates).
+        conns = getattr(self, "_inst_conns_cache", None)
+        if conns is None:
+            conns = []
+            for inst in self.insts:
+                if "contact" not in inst.name:
+                    conns.append(inst.get_connections())
+            self._inst_conns_cache = conns
         return conns
 
     def is_net_alias(self, known_net, net_alias, mod, exclusion_set):

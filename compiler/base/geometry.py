@@ -10,6 +10,7 @@ This provides a set of useful generic types for the gdsMill interface.
 """
 import math
 import copy
+from collections import OrderedDict
 import numpy as np
 from openram import debug
 from openram import tech
@@ -181,10 +182,22 @@ class instance(geometry):
         # track if the instance's spice pin connections have been made
         self.connected = False
 
-        # deepcopy because this instance needs to
-        # change attributes in these spice objects
-        self.spice_pins = copy.deepcopy(self.mod.pins)
-        self.spice_nets = copy.deepcopy(self.mod.nets)
+        # Copy because this instance needs to change attributes in these
+        # spice objects. pin_spice/net_spice define __deepcopy__ (they copy
+        # shallowly by design); calling it directly avoids the copy-module
+        # dispatch overhead that dominates instance creation in big arrays.
+        # Some modules (e.g. contacts) keep plain lists here instead.
+        if hasattr(self.mod.pins, "items"):
+            self.spice_pins = OrderedDict(
+                (name, pin.__deepcopy__(None))
+                for name, pin in self.mod.pins.items())
+        else:
+            self.spice_pins = copy.deepcopy(self.mod.pins)
+        if hasattr(self.mod.nets, "items"):
+            self.spice_nets = {name: net.__deepcopy__(None)
+                               for name, net in self.mod.nets.items()}
+        else:
+            self.spice_nets = copy.deepcopy(self.mod.nets)
         if "contact" not in mod.name:
             for pin in self.spice_pins.values():
                 pin.set_inst(self)
