@@ -216,7 +216,9 @@ class instance(geometry):
                 self.height = round_to_grid(mod.height)
         self.compute_boundary(offset, mirror, rotate)
 
-        debug.info(4, "creating instance: " + self.name)
+        if debug.is_verbose(4):
+
+            debug.info(4, "creating instance: " + self.name)
 
     def get_blockages(self, lpp, top=False):
         """ Retrieve blockages of all modules in this instance.
@@ -253,7 +255,8 @@ class instance(geometry):
 
     def gds_write_file(self, new_layout):
         """Recursively writes all the sub-modules in this instance"""
-        debug.info(4, "writing instance: " + self.name)
+        if debug.is_verbose(4):
+            debug.info(4, "writing instance: " + self.name)
         # make sure to write out my module/structure
         # (it will only be written the first time though)
         self.mod.gds_write_file(self.gds)
@@ -520,11 +523,14 @@ class label(geometry):
 
         self.size = 0
 
-        debug.info(4, "creating label " + self.text + " " + str(self.layerNumber) + " " + str(self.offset))
+        if debug.is_verbose(4):
+
+            debug.info(4, "creating label " + self.text + " " + str(self.layerNumber) + " " + str(self.offset))
 
     def gds_write_file(self, new_layout):
         """Writes the text label to GDS"""
-        debug.info(4, "writing label (" + str(self.layerNumber) + "): " + self.text)
+        if debug.is_verbose(4):
+            debug.info(4, "writing label (" + str(self.layerNumber) + "): " + self.text)
         new_layout.addText(text=self.text,
                            layerNumber=self.layerNumber,
                            purposeNumber=self.layerPurpose,
@@ -558,8 +564,9 @@ class rectangle(geometry):
         self.height = round_to_grid(self.size.y)
         self.compute_boundary(offset, "", 0)
 
-        debug.info(4, "creating rectangle (" + str(self.layerNumber) + "): "
-                   + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
+        if debug.is_verbose(4):
+            debug.info(4, "creating rectangle (" + str(self.layerNumber) + "): "
+                       + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
 
     def get_blockages(self, layer):
         """ Returns a list of one rectangle if it is on this layer"""
@@ -572,8 +579,9 @@ class rectangle(geometry):
 
     def gds_write_file(self, new_layout):
         """Writes the rectangular shape to GDS"""
-        debug.info(4, "writing rectangle (" + str(self.layerNumber) + "):"
-                   + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
+        if debug.is_verbose(4):
+            debug.info(4, "writing rectangle (" + str(self.layerNumber) + "):"
+                       + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
         new_layout.addBox(layerNumber=self.layerNumber,
                           purposeNumber=self.layerPurpose,
                           offsetInMicrons=self.offset,

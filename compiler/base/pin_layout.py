@@ -103,8 +103,9 @@ class pin_layout:
         self._recompute_hash()
 
     def _recompute_hash(self):
-        """ Recompute the hash for our hash cache """
-        self._hash = hash(repr(self))
+        """ Invalidate the hash cache (computed lazily on first use, since
+        hashing builds the repr string and most pins are never hashed). """
+        self._hash = None
 
     def __str__(self):
         """ override print function output """
@@ -125,9 +126,11 @@ class pin_layout:
     def __hash__(self):
         """
         Implement the hash function for sets etc. We only return a cached
-        value, that is updated when either 'rect' or 'layer' are changed. This
-        is a major speedup, if pin_layout is used as a key for dicts.
+        value, that is invalidated when either 'rect' or 'layer' are changed.
+        This is a major speedup, if pin_layout is used as a key for dicts.
         """
+        if self._hash is None:
+            self._hash = hash(repr(self))
         return self._hash
 
     def __lt__(self, other):
@@ -426,9 +429,10 @@ class pin_layout:
 
     def gds_write_file(self, newLayout):
         """Writes the pin shape and label to GDS"""
-        debug.info(4, "writing pin (" + str(self.layer) + "):"
-                   + str(self.width()) + "x"
-                   + str(self.height()) + " @ " + str(self.ll()))
+        if debug.is_verbose(4):
+            debug.info(4, "writing pin (" + str(self.layer) + "):"
+                       + str(self.width()) + "x"
+                       + str(self.height()) + " @ " + str(self.ll()))
 
         # Try to use the pin layer if it exists, otherwise
         # use the regular layer

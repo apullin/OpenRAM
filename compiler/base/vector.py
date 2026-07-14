@@ -8,6 +8,11 @@
 import math
 from openram import tech
 
+# snap_offset_to_grid memo; invalidated when the grid changes (tests swap
+# techs in-process)
+_snap_cache = {}
+_snap_grid = [None]
+
 
 class vector():
     """
@@ -28,7 +33,7 @@ class vector():
         else:
             self.x = float(x)
             self.y = float(y)
-        self._hash = hash((self.x,self.y))
+        self._hash = None
 
     def __str__(self):
         """ override print function output """
@@ -50,7 +55,7 @@ class vector():
         else:
             self.x=float(value[0])
             self.y=float(value[1])
-        self._hash = hash((self.x,self.y))
+        self._hash = None
 
     def __getitem__(self, index):
         """
@@ -96,26 +101,38 @@ class vector():
     def __hash__(self):
         """
         Override - function (hash)
-        Note: This assumes that you DON'T CHANGE THE VECTOR or it will
-        break things.
+        Computed lazily: most vectors are never hashed, and eager hashing
+        dominated construction cost.
         """
+        if self._hash is None:
+            self._hash = hash((self.x, self.y))
         return self._hash
 
     def snap_to_grid(self):
         self.x = self.snap_offset_to_grid(self.x)
         self.y = self.snap_offset_to_grid(self.y)
-        self._hash = hash((self.x,self.y))
+        self._hash = None
         return self
 
     def snap_offset_to_grid(self, offset):
         """
         Changes the coodrinate to match the grid settings
         """
+        # Coordinates repeat massively; memoize the double-round.
         grid = tech.drc["grid"]
+        if grid != _snap_grid[0]:
+            _snap_cache.clear()
+            _snap_grid[0] = grid
+        else:
+            try:
+                return _snap_cache[offset]
+            except KeyError:
+                pass
         # this gets the nearest integer value
         off_in_grid = int(round(round((offset / grid), 2), 0))
-        offset = off_in_grid * grid
-        return offset
+        snapped = off_in_grid * grid
+        _snap_cache[offset] = snapped
+        return snapped
 
     def rotate(self):
         """ pass a copy of rotated vector, without altering the vector! """
@@ -157,7 +174,7 @@ class vector():
     def __eq__(self, other):
         """Override the default Equals behavior"""
         if isinstance(other, self.__class__):
-            return self.__dict__ == other.__dict__
+            return self.x == other.x and self.y == other.y
         return False
 
     def __ne__(self, other):
