@@ -5,7 +5,6 @@
 # (acting for and on behalf of Oklahoma State University)
 # All rights reserved.
 #
-from sklearn.neural_network import MLPRegressor
 from openram import debug
 from openram import OPTS
 from .regression_model import regression_model
@@ -17,6 +16,9 @@ class neural_network(regression_model):
         super().__init__(sram, spfile, corner)
 
     def get_model(self):
+        # Import lazily: sklearn costs ~1s at import time and this model is
+        # only used when OPTS.model_name selects it.
+        from sklearn.neural_network import MLPRegressor
         return MLPRegressor(solver='lbfgs', alpha=1e-5,
                             hidden_layer_sizes=(40, 40, 40, 40), random_state=1)
 

@@ -5,8 +5,6 @@
 # (acting for and on behalf of Oklahoma State University)
 # All rights reserved.
 #
-from sklearn.linear_model import Ridge
-from sklearn.linear_model import LinearRegression
 from openram import debug
 from openram import OPTS
 from .regression_model import regression_model
@@ -18,6 +16,9 @@ class linear_regression(regression_model):
         super().__init__(sram, spfile, corner)
 
     def get_model(self):
+        # Import lazily: sklearn costs ~1s at import time and this model is
+        # only used when OPTS.model_name selects it.
+        from sklearn.linear_model import Ridge
         return Ridge()
 
     def generate_model(self, features, labels):
