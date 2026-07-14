@@ -370,6 +370,8 @@ class graph_test(openram_test):
             with patch.object(router_bbox, "merge", counted_merge):
                 bulk = bbox_node.build(tree_boxes)
         self.assertEqual(len(merge_calls), len(tree_boxes) - 1)
+        self.assertIsNotNone(bulk._flat_tree)
+        self.assertIsNone(bulk.left._flat_tree)
         self.assertIsNone(bbox_node.build([]))
         self.assertIs(bbox_node.build([tree_boxes[0]]).bbox, tree_boxes[0])
 
@@ -387,8 +389,16 @@ class graph_test(openram_test):
 
         ordered_shapes = list(leaf_shapes(bulk))
 
+        def stack_results(method, *args):
+            flat_tree = bulk._flat_tree
+            bulk._flat_tree = None
+            try:
+                return list(method(*args))
+            finally:
+                bulk._flat_tree = flat_tree
+
         for point in [vector(-3, -1), vector(1, 1),
-                      vector(2, 2), vector(10, 10)]:
+                      vector(2, 2), vector(5.5, 1), vector(10, 10)]:
             expected = []
             for item in ordered_shapes:
                 ll, ur = item.rect
@@ -396,6 +406,10 @@ class graph_test(openram_test):
                         ll.y <= point.y <= ur.y):
                     expected.append(item)
             actual = list(bulk.iterate_point(point))
+            self.assertEqual(
+                [id(item) for item in actual],
+                [id(item) for item in stack_results(
+                    bulk.iterate_point, point)])
             self.assertEqual([id(item) for item in actual],
                              [id(item) for item in expected])
             self.assertEqual(result_ids(actual),
@@ -404,6 +418,7 @@ class graph_test(openram_test):
             shape("query_0", (1.5, 1.5), (2.5, 2.5)),
             shape("query_1", (-4, -2), (-3, -1)),
             shape("query_2", (8, 8), (9, 9)),
+            shape("query_all", (-10, -10), (10, 10)),
         ]
         for query in query_shapes:
             qll, qur = query.rect
@@ -414,6 +429,10 @@ class graph_test(openram_test):
                         ll.y <= qur.y and qll.y <= ur.y):
                     expected.append(item)
             actual = list(bulk.iterate_shape(query))
+            self.assertEqual(
+                [id(item) for item in actual],
+                [id(item) for item in stack_results(
+                    bulk.iterate_shape, query)])
             actual_bounds = list(bulk.iterate_rect(
                 qll.x, qll.y, qur.x, qur.y))
             self.assertEqual([id(item) for item in actual_bounds],
@@ -422,6 +441,17 @@ class graph_test(openram_test):
                              [id(item) for item in expected])
             self.assertEqual(result_ids(actual),
                              result_ids(incremental.iterate_shape(query)))
+
+        self.assertEqual(
+            [id(item) for item in bulk.left.iterate_rect(-100, -100, 100, 100)],
+            [id(item) for item in leaf_shapes(bulk.left)])
+
+        none_bbox = router_bbox()
+        none_bbox.rect = [vector(20, 20), vector(21, 21)]
+        none_tree = bbox_node.build([
+            none_bbox, router_bbox(shape("non_none", (22, 22), (23, 23)))])
+        self.assertEqual(
+            list(none_tree.iterate_point(vector(20.5, 20.5))), [None])
 
         leaf = bbox_node(tree_boxes[0])
         outside_point = vector(100, 100)
@@ -441,6 +471,12 @@ class graph_test(openram_test):
             list(bulk.iterate_rect(100, 100, 101, 101, True)), [])
         self.assertEqual(list(bulk.iterate_point(outside_point, True)), [])
         self.assertEqual(list(bulk.iterate_shape(outside_shape, True)), [])
+
+        inserted_after_build = shape("tree_inserted", (8, 0), (10, 2))
+        bulk.insert(router_bbox(inserted_after_build))
+        self.assertIsNone(bulk._flat_tree)
+        self.assertEqual(list(bulk.iterate_point(vector(9, 1))),
+                         [inserted_after_build])
 
         original_drc = graph_utils.tech.drc
         try:

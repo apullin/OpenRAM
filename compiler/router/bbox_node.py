@@ -17,6 +17,7 @@ class bbox_node:
         self.is_leaf = not left and not right
         self.left = left
         self.right = right
+        self._flat_tree = None
 
 
     def iterate_point(self, point, check_done=False):
@@ -27,6 +28,20 @@ class bbox_node:
             ll, ur = self.bbox.rect
             if check_done or (ll.x <= px <= ur.x and ll.y <= py <= ur.y):
                 yield self.bbox.shape
+            return
+
+        flat_tree = self._flat_tree
+        if flat_tree is not None:
+            index = 1
+            end = len(flat_tree)
+            while index < end:
+                llx, lly, urx, ury, escape, leaf_bbox = flat_tree[index]
+                if llx <= px <= urx and lly <= py <= ury:
+                    index += 1
+                    if leaf_bbox is not None:
+                        yield leaf_bbox.shape
+                else:
+                    index = escape
             return
 
         stack = []
@@ -64,6 +79,21 @@ class bbox_node:
             if check_done or (ll.x <= surx and sllx <= ur.x and
                               ll.y <= sury and slly <= ur.y):
                 yield self.bbox.shape
+            return
+
+        flat_tree = self._flat_tree
+        if flat_tree is not None:
+            index = 1
+            end = len(flat_tree)
+            while index < end:
+                llx, lly, urx, ury, escape, leaf_bbox = flat_tree[index]
+                if (llx <= surx and sllx <= urx and
+                        lly <= sury and slly <= ury):
+                    index += 1
+                    if leaf_bbox is not None:
+                        yield leaf_bbox.shape
+                else:
+                    index = escape
             return
 
         stack = []
@@ -123,7 +153,25 @@ class bbox_node:
             right = build_items(ordered[middle:])
             return cls(left.bbox.merge(right.bbox), left, right)
 
-        return build_items(indexed)
+        root = build_items(indexed)
+        flat_tree = []
+
+        def flatten(node):
+            index = len(flat_tree)
+            flat_tree.append(None)
+            if not node.is_leaf:
+                if node.left:
+                    flatten(node.left)
+                if node.right:
+                    flatten(node.right)
+            ll, ur = node.bbox.rect
+            flat_tree[index] = (ll.x, ll.y, ur.x, ur.y,
+                                len(flat_tree),
+                                node.bbox if node.is_leaf else None)
+
+        flatten(root)
+        root._flat_tree = flat_tree
+        return root
 
 
     def get_costs(self, bbox):
@@ -159,6 +207,8 @@ class bbox_node:
 
     def insert(self, bbox):
         """ Insert a bbox to the bbox tree. """
+
+        self._flat_tree = None
 
         if self.is_leaf:
             # Put the current bbox to the left child
