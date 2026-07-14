@@ -1350,6 +1350,10 @@ class delay(simulation):
         One (load, slew) delay simulation. Safe to run as a parallel job:
         it only touches files under OPTS.openram_temp.
         """
+        # Parallel workers rebind OPTS.openram_temp to a private
+        # subdirectory, but self.output_path captured the parent dir at
+        # init; the stimulus must be written where run_sim will read it.
+        self.output_path = OPTS.openram_temp
         (load, slew) = pair
         self.set_load_slew(load, slew)
         # Find the delay, dynamic power, and leakage power of the trimmed array.
