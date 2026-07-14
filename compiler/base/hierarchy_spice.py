@@ -826,6 +826,9 @@ class net_spice():
     def __init__(self, name, mod):
         self.name = name
         self.pins = []
+        # Identity set mirroring self.pins so connect_pin avoids an O(n) list
+        # scan (pin equality is object identity for pin_spice operands).
+        self._pin_ids = set()
         self.mod = mod
         self.inst = None
 
@@ -834,10 +837,11 @@ class net_spice():
 
     def connect_pin(self, pin):
         debug.check(isinstance(pin, pin_spice), "pin must be a pin_spice object")
-        if pin in self.pins:
+        if id(pin) in self._pin_ids:
             debug.warning("pin {} was already connected to net {} ... why was it connected again?".format(pin.name, self.name))
         else:
             self.pins.append(pin)
+            self._pin_ids.add(id(pin))
 
     def set_inst(self, inst):
         self.inst = inst
@@ -878,4 +882,7 @@ class net_spice():
         if original.pins != []:
             # TODO: honestly I'm not sure if this is right but we'll see...
             net.pins = original.pins
+            # The list is shared with the original, so share the mirror set
+            # too to keep membership checks in sync through either alias.
+            net._pin_ids = original._pin_ids
         return net
