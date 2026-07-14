@@ -12,6 +12,76 @@ list across labels when a layer_override hits — mirror vlsiLayout.py.
 from .rust_router import load_openram_rs
 
 
+def export_design(design):
+    """
+    Build the design's in-memory gdsMill layout (the first half of
+    gds_write) and export its structures into a cached Rust GdsLayout,
+    skipping the GDS serialize/parse round-trip entirely. Child structures
+    are immutable once built, so only new structures and the top structure
+    cross the boundary on later calls.
+    """
+    from openram import debug
+    from openram.gdsMill import gdsMill
+    from openram.tech import GDS
+
+    rs = load_openram_rs()
+
+    # Same rebuild logic as hierarchy_layout.gds_write
+    if not design.is_library_cell and design.visited:
+        debug.info(3, "Creating layout structure {}".format(design.name))
+        design.gds = gdsMill.VlsiLayout(name=design.name, units=GDS["unit"])
+    design.clear_visited()
+    design.gds_write_file(design.gds)
+
+    layout = design.gds
+    rl = getattr(design, "_rust_gds_layout", None)
+    if rl is None:
+        rl = rs.GdsLayout.empty(layout.units[0])
+        design._rust_gds_layout = rl
+
+    root = str(layout.rootStructureName)
+    if root.endswith("\x00"):
+        root = root.rstrip("\x00")
+    for name, s in layout.structures.items():
+        sname = str(name)
+        if sname.endswith("\x00"):
+            sname = sname.rstrip("\x00")
+        if sname != root and rl.has_structure(sname):
+            continue
+        boundaries = []
+        for b in s.boundaries:
+            purpose = b.purposeLayer if isinstance(b.purposeLayer, int) else 0
+            flat = []
+            for c in b.coordinates:
+                flat.append(float(c[0]))
+                flat.append(float(c[1]))
+            boundaries.append((b.drawingLayer, purpose, flat))
+        srefs = []
+        for sref in s.srefs:
+            child = str(sref.sName)
+            if child.endswith("\x00"):
+                child = child.rstrip("\x00")
+            angle = sref.rotateAngle
+            angle = 0.0 if angle in ("", None) else float(angle)
+            srefs.append((child,
+                          float(sref.coordinates[0]),
+                          float(sref.coordinates[1]),
+                          bool(sref.transFlags[0]),
+                          angle))
+        texts = []
+        for t in s.texts:
+            string = str(t.textString)
+            if string.endswith("\x00"):
+                string = string.rstrip("\x00")
+            purpose = t.purposeLayer if isinstance(t.purposeLayer, int) else 0
+            texts.append((string, t.drawingLayer, purpose,
+                          float(t.coordinates[0][0]),
+                          float(t.coordinates[0][1])))
+        rl.add_structure(sname, boundaries, srefs, texts)
+    rl.set_root(root)
+    return rl
+
+
 def _same_lpp(lpp1, lpp2):
     if lpp1[1] is None or lpp2[1] is None:
         return lpp1[0] == lpp2[0]
@@ -21,9 +91,12 @@ def _same_lpp(lpp1, lpp2):
 class rust_layout:
     """ Drop-in for VlsiLayout in the router's read path. """
 
-    def __init__(self, gds_filename, units=(0.001, 1e-9)):
-        rs = load_openram_rs()
-        self._layout = rs.GdsLayout(gds_filename)
+    def __init__(self, gds_filename=None, units=(0.001, 1e-9), layout=None):
+        if layout is not None:
+            self._layout = layout
+        else:
+            rs = load_openram_rs()
+            self._layout = rs.GdsLayout(gds_filename)
         self.units = units
         self.pins = {}
         self._process_all_label_pins()

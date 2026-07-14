@@ -104,6 +104,65 @@ impl GdsLayout {
         Ok(GdsLayout { layout })
     }
 
+    /// Empty layout for direct in-memory export from Python.
+    #[staticmethod]
+    fn empty(user_unit: f64) -> GdsLayout {
+        GdsLayout {
+            layout: openram_core::gds::Layout::new_empty(user_unit),
+        }
+    }
+
+    /// Add or replace one structure.
+    /// boundaries: (layer, purpose, [x0, y0, x1, y1, ...]) in DB units.
+    /// srefs: (child_name, x, y, mirror_x, angle_degrees).
+    /// texts: (string, layer, purpose, x, y).
+    fn add_structure(
+        &mut self,
+        name: &str,
+        boundaries: Vec<(i16, i16, Vec<f64>)>,
+        srefs: Vec<(String, f64, f64, bool, f64)>,
+        texts: Vec<(String, i16, i16, f64, f64)>,
+    ) {
+        let s = openram_core::gds::Structure {
+            name: name.to_string(),
+            boundaries: boundaries
+                .into_iter()
+                .map(|(layer, purpose, flat)| openram_core::gds::Boundary {
+                    layer,
+                    purpose,
+                    coords: flat.chunks_exact(2).map(|c| (c[0], c[1])).collect(),
+                })
+                .collect(),
+            srefs: srefs
+                .into_iter()
+                .map(|(sname, x, y, mirror_x, angle)| openram_core::gds::Sref {
+                    sname,
+                    xy: (x, y),
+                    mirror_x,
+                    angle,
+                })
+                .collect(),
+            texts: texts
+                .into_iter()
+                .map(|(string, layer, purpose, x, y)| openram_core::gds::Text {
+                    layer,
+                    purpose,
+                    xy: (x, y),
+                    string,
+                })
+                .collect(),
+        };
+        self.layout.add_structure(s);
+    }
+
+    fn has_structure(&self, name: &str) -> bool {
+        self.layout.has_structure(name)
+    }
+
+    fn set_root(&mut self, name: &str) {
+        self.layout.set_root(name);
+    }
+
     fn root_name(&self) -> Option<String> {
         self.layout
             .root
