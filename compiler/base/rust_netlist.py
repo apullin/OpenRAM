@@ -26,7 +26,12 @@ def export_netlist(design):
             pass
         spice_text = "\n".join(mod.spice) if mod.spice else None
         lvs_text = "\n".join(mod.lvs) if hasattr(mod, "lvs") else None
-        pins = [(str(p.name), str(p.type)) for p in mod.pins.values()]
+        # contact/wire modules keep pins as a plain list; they are
+        # no_instances (or pinless) so sp_write_file never reads types.
+        if hasattr(mod.pins, "values"):
+            pins = [(str(p.name), str(p.type)) for p in mod.pins.values()]
+        else:
+            pins = []
         comments = [str(c) for c in getattr(mod, "comments", [])]
         mid = db.add_module(str(mod.name),
                             str(mod.cell_name),

@@ -239,8 +239,10 @@ impl NetlistDb {
         self.db.top = Some(id);
     }
 
-    fn write_spice(&self, py: Python<'_>, path: &str, lvs: bool, trim: bool) -> PyResult<()> {
-        let text = py.detach(|| self.db.write_spice(lvs, trim));
+    #[pyo3(signature = (path, lvs, trim, header=None))]
+    fn write_spice(&self, py: Python<'_>, path: &str, lvs: bool, trim: bool,
+                   header: Option<&str>) -> PyResult<()> {
+        let text = py.detach(|| self.db.write_spice(lvs, trim, header));
         std::fs::write(path, text)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
     }
