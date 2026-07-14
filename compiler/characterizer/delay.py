@@ -1016,7 +1016,9 @@ class delay(simulation):
         period_load_slew_str = "period {0} load {1} slew {2}".format(self.period, self.load, self.slew)
 
         # if it failed or the read was longer than a period
-        if type(delay_hl)!=float or type(delay_lh)!=float or type(slew_lh)!=float or type(slew_hl)!=float:
+        measured_values = (delay_hl, delay_lh, slew_hl, slew_lh)
+        if any(type(value) != float or not math.isfinite(value)
+               for value in measured_values):
             delays_str = "delay_hl={0} delay_lh={1}".format(delay_hl, delay_lh)
             slews_str = "slew_hl={0} slew_lh={1}".format(slew_hl, slew_lh)
             debug.info(2, "Failed simulation (in sec):\n\t\t{0}\n\t\t{1}\n\t\t{2}".format(period_load_slew_str,
@@ -1314,13 +1316,13 @@ class delay(simulation):
         debug.check(type(min_period)==float, "Couldn't find minimum period.")
         debug.info(1, "Min Period Found: {0}ns".format(min_period))
         char_sram_data["min_period"] = round_time(min_period)
+        self.period = min_period
 
         # 3) Find the leakage power of the trimmmed and  UNtrimmed arrays.
         (full_array_leakage, trim_array_leakage)=self.run_power_simulation()
         char_sram_data["leakage_power"]=full_array_leakage
         leakage_offset = full_array_leakage - trim_array_leakage
         # 4) At the minimum period, measure the delay, slew and power for all slew/load pairs.
-        self.period = min_period
         char_port_data = self.simulate_loads_and_slews(load_slews, leakage_offset)
         if OPTS.use_specified_load_slew is not None and len(load_slews) > 1:
             debug.warning("Path delay lists not correctly generated for characterizations of more than 1 load,slew")
@@ -1332,18 +1334,28 @@ class delay(simulation):
         # char_sram_data["sen_path_measures"] = sen_delays
         # char_sram_data["bl_path_names"] = bl_names
         # char_sram_data["sen_path_names"] = sen_names
-        # FIXME: low-to-high delays are altered to be independent of the period. This makes the lib results less accurate.
+        # Normalize low-to-high and high-to-low results to a conservative same-edge proxy.
         self.alter_lh_char_data(char_port_data)
 
         return (char_sram_data, char_port_data)
 
     def alter_lh_char_data(self, char_port_data):
-        """Copies high-to-low data to low-to-high data to make them consistent on the same clock edge."""
+        """Use conservative rise/fall proxies referenced to the same clock edge."""
 
-        # This is basically a hack solution which should be removed/fixed later.
         for port in self.all_ports:
-            char_port_data[port]['delay_lh'] = char_port_data[port]['delay_hl']
-            char_port_data[port]['slew_lh'] = char_port_data[port]['slew_hl']
+            for measure_name in ("delay", "slew"):
+                lh_name = "{}_lh".format(measure_name)
+                hl_name = "{}_hl".format(measure_name)
+                lh_values = char_port_data[port][lh_name]
+                hl_values = char_port_data[port][hl_name]
+                debug.check(len(lh_values) == len(hl_values),
+                            "Mismatched rise/fall {} table lengths.".format(measure_name))
+                debug.check(all(math.isfinite(value) for value in lh_values + hl_values),
+                            "Non-finite rise/fall {} table value.".format(measure_name))
+                proxy_values = [max(lh_value, hl_value)
+                                for lh_value, hl_value in zip(lh_values, hl_values)]
+                char_port_data[port][lh_name] = proxy_values
+                char_port_data[port][hl_name] = list(proxy_values)
 
     def simulate_loads_and_slews(self, load_slews, leakage_offset):
         """Simulate all specified output loads and input slews pairs of all ports"""
