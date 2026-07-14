@@ -77,7 +77,9 @@ def wait_script(handle):
         if outputdelta > 30:
             lastoutput = time.time()
             debug.info(1, "Still running {} ({:.0f} seconds)".format(scriptpath, runningfor))
-        time.sleep(1)
+        # Fine-grained poll: 1s quanta added up to a second of latency
+        # per script in pipelined DRC/LVS runs.
+        time.sleep(0.05)
     assert p.poll() != None, (p.poll(), p)
     p.wait()
 

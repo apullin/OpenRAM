@@ -374,11 +374,70 @@ def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=
     return _parse_drc_results(cell_name, outfile)
 
 
+def _hash_gds_masked(h, path):
+    """ Hash a GDS stream with the BGNLIB/BGNSTR records skipped: they
+    carry modification timestamps, which must not bust the cache. """
+    with open(path, "rb") as f:
+        data = f.read()
+    pos = 0
+    n = len(data)
+    while pos + 4 <= n:
+        ln = int.from_bytes(data[pos:pos + 2], "big")
+        if ln < 4:
+            break
+        if data[pos + 2] not in (0x01, 0x05):
+            h.update(data[pos:pos + ln])
+        pos += ln
+
+
+def _verify_cache_key(cell_name, gds_name, sp_name):
+    """ The DRC/LVS verdict is a pure function of the layout, the
+    netlist, the generated tool scripts (which embed the tool paths and
+    every option), and the tech collateral; hash all of them. """
+    import hashlib
+    h = hashlib.sha256()
+    gds_path = (gds_name if os.path.isabs(gds_name)
+                else OPTS.openram_temp + gds_name)
+    try:
+        _hash_gds_masked(h, gds_path)
+    except OSError:
+        h.update(b"<missing>")
+    h.update(b"\0")
+    paths = [OPTS.openram_temp + sp_name if not os.path.isabs(sp_name)
+             else sp_name,
+             OPTS.openram_temp + "run_extract.sh",
+             OPTS.openram_temp + "run_drc.sh",
+             OPTS.openram_temp + "run_lvs.sh",
+             OPTS.openram_temp + "/.magicrc"]
+    tech_dir = OPTS.openram_tech + "tech/"
+    if os.path.isdir(tech_dir):
+        for f in sorted(os.listdir(tech_dir)):
+            if f.endswith(".tech") or f == "setup.tcl":
+                paths.append(tech_dir + f)
+    for p in paths:
+        try:
+            with open(p, "rb") as f:
+                h.update(f.read())
+        except OSError:
+            h.update(b"<missing>")
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _verify_cache_dir():
+    base = os.environ.get("XDG_CACHE_HOME",
+                          os.path.expanduser("~/.cache"))
+    return os.path.join(base, "openram", "verify")
+
+
 def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
     """Run DRC and LVS together. The Magic DRC and Magic extraction
     sessions each read the GDS themselves (cheap) instead of sharing a
     .mag view (whose cell files are lock-contended), so they run fully
-    concurrently; Netgen LVS follows the extracted netlist. """
+    concurrently; Netgen LVS follows the extracted netlist. Verdicts
+    are cached keyed on the layout/netlist/scripts/tech content, so
+    re-verifying an unchanged design is free (verify_cache=False
+    disables it; remove ~/.cache/openram/verify to clear). """
 
     global num_drc_runs
     global num_lvs_runs
@@ -387,6 +446,23 @@ def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
 
     write_drc_lvs_scripts(cell_name, gds_name, sp_name, final_verification, OPTS.openram_temp)
     write_lvs_script(cell_name, gds_name, sp_name, final_verification)
+
+    cache_file = None
+    if getattr(OPTS, "verify_cache", True):
+        import json
+        key = _verify_cache_key(cell_name, gds_name, sp_name)
+        cache_file = os.path.join(_verify_cache_dir(), key + ".json")
+        try:
+            with open(cache_file) as f:
+                cached = json.load(f)
+            debug.info(1, "DRC/LVS verdict for {} cached: {} DRC / {} LVS "
+                          "errors ({})".format(cell_name,
+                                               cached["drc_errors"],
+                                               cached["lvs_errors"],
+                                               cache_file))
+            return (cached["drc_errors"], cached["lvs_errors"])
+        except (OSError, ValueError, KeyError):
+            pass
 
     drc_handle = start_script(cell_name, "drc")
     extract_handle = start_script(cell_name, "extract")
@@ -398,6 +474,17 @@ def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
 
     drc_errors = _parse_drc_results(cell_name, drc_outfile)
     lvs_errors = _parse_lvs_results(cell_name, lvs_resultsfile)
+
+    if cache_file is not None:
+        import json
+        os.makedirs(_verify_cache_dir(), exist_ok=True)
+        tmp_file = cache_file + ".tmp{}".format(os.getpid())
+        with open(tmp_file, "w") as f:
+            json.dump({"cell_name": cell_name,
+                       "drc_errors": drc_errors,
+                       "lvs_errors": lvs_errors}, f)
+        os.replace(tmp_file, cache_file)
+
     return (drc_errors, lvs_errors)
 
 
