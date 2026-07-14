@@ -72,15 +72,37 @@ class graph_shape(pin_layout):
 
 
     def core_contained_by_any(self, shape_list):
-        """
-        Return if the core of this shape is contained by any shape's core in the
-        given list.
-        """
+        """Return whether any shape core contains this shape core."""
 
         self_core = self.get_core()
+        if type(self_core) is not graph_shape:
+            for shape in shape_list:
+                if shape.get_core().contains(self_core):
+                    return True
+            return False
+
+        self_lpp = self_core.lpp
+        sll, sur = self_core._rect
         for shape in shape_list:
             shape_core = shape.get_core()
-            if shape_core.contains(self_core):
+            if type(shape_core) is not graph_shape:
+                if shape_core.contains(self_core):
+                    return True
+                continue
+            if shape_core is self_core:
+                return True
+            shape_lpp = shape_core.lpp
+            same_lpp = (
+                shape_lpp is self_lpp or
+                (shape_lpp[0] == self_lpp[0] and
+                 (shape_lpp[1] is None or self_lpp[1] is None or
+                  shape_lpp[1] == self_lpp[1]))
+            )
+            if not same_lpp:
+                continue
+            cll, cur = shape_core._rect
+            if (sll.x >= cll.x and sur.x <= cur.x and
+                    sll.y >= cll.y and sur.y <= cur.y):
                 return True
         return False
 

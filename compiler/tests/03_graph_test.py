@@ -364,6 +364,92 @@ class graph_test(openram_test):
             ("m1", 0, 0, 8, 1),
         ])
 
+        def shape_bounds(item):
+            ll, ur = item.rect
+            return (ll.x, ll.y, ur.x, ur.y)
+
+        fast_router = router_class.__new__(router_class)
+        merger_core = shape("merger_core", (0, 0), (2, 1))
+        merger = graph_shape(
+            "merger", [vector(-1, -1), vector(3, 2)], "m1", merger_core)
+        aligned_core = shape("aligned_core", (2, 0), (4, 1))
+        aligned_shape = graph_shape(
+            "aligned", [vector(1, -1), vector(5, 2)],
+            "m1", aligned_core)
+        aligned_shapes = [aligned_shape]
+        fast_router.merge_shapes(merger, aligned_shapes)
+        self.assertEqual(aligned_shapes, [])
+        self.assertEqual(shape_bounds(merger), (-1, -1, 5, 2))
+        self.assertEqual(shape_bounds(merger_core), (0, 0, 4, 1))
+
+        early = shape("early", (2, 0), (3, 1))
+        bridge = shape("bridge", (1, 0), (2, 1))
+        chain_merger = shape("chain_merger", (0, 0), (1, 1))
+        chain = [early, bridge]
+        fast_router.merge_shapes(chain_merger, chain)
+        self.assertEqual([id(item) for item in chain], [id(early)])
+        self.assertEqual(shape_bounds(chain_merger), (0, 0, 2, 1))
+
+        early = shape("early_reverse", (2, 0), (3, 1))
+        bridge = shape("bridge_reverse", (1, 0), (2, 1))
+        chain_merger = shape("chain_merger_reverse", (0, 0), (1, 1))
+        chain = [bridge, early]
+        fast_router.merge_shapes(chain_merger, chain)
+        self.assertEqual(chain, [])
+        self.assertEqual(shape_bounds(chain_merger), (0, 0, 3, 1))
+
+        cross_layer = shape("cross_layer", (0, 0), (1, 1), "m2")
+        cross_layer_shapes = [cross_layer]
+        fast_router.merge_shapes(
+            shape("same_bounds_m1", (0, 0), (1, 1)),
+            cross_layer_shapes)
+        self.assertEqual([id(item) for item in cross_layer_shapes],
+                         [id(cross_layer)])
+
+        reversed_candidate = graph_shape(
+            "reversed_candidate", [vector(0, 5), vector(4, 2)], "m1")
+        reversed_shapes = [reversed_candidate]
+        fast_router.merge_shapes(
+            shape("reversed_merger", (0, 0), (4, 4)), reversed_shapes)
+        self.assertEqual(reversed_shapes, [])
+
+
+        contained_shape = shape("set_contained", (1, 1), (2, 2))
+        contained_set = {contained_shape}
+        fast_router.merge_shapes(
+            shape("set_merger", (0, 0), (3, 3)), contained_set)
+        self.assertEqual(contained_set, set())
+
+        class dispatch_container(graph_shape):
+            def contains(self, _other):
+                self.contains_called = True
+                return False
+
+            def aligns(self, _other):
+                self.aligns_called = True
+                return True
+
+        dispatch_merger = dispatch_container(
+            "dispatch", [vector(0, 0), vector(1, 1)], "m1")
+        dispatch_merger.contains_called = False
+        dispatch_merger.aligns_called = False
+        dispatch_shapes = [shape("dispatch_other", (4, 4), (5, 5))]
+        fast_router.merge_shapes(dispatch_merger, dispatch_shapes)
+        self.assertTrue(dispatch_merger.contains_called)
+        self.assertTrue(dispatch_merger.aligns_called)
+        self.assertEqual(dispatch_shapes, [])
+
+        class core_container(graph_shape):
+            def contains(self, _other):
+                self.contains_called = True
+                return True
+
+        dynamic_container = core_container(
+            "dynamic_container", [vector(10, 10), vector(11, 11)], "m1")
+        dynamic_container.contains_called = False
+        self.assertTrue(shape("dynamic_probe", (0, 0), (1, 1)).
+                        core_contained_by_any([dynamic_container]))
+        self.assertTrue(dynamic_container.contains_called)
 
         class containment_shape(graph_shape):
             def __eq__(self, _other):

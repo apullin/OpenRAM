@@ -68,23 +68,68 @@ class router(router_tech):
 
 
     def merge_shapes(self, merger, shape_list):
-        """
-        Merge shapes in the list into the merger if they are contained or
-        aligned by the merger.
-        """
+        """Merge contained or aligned shapes into ``merger``."""
 
         merger_core = merger.get_core()
+        fast_merger = type(merger_core) is graph_shape
+        if fast_merger:
+            merger_lpp = merger_core.lpp
+            mll, mur = merger_core._rect
+
         for shape in list(shape_list):
             shape_core = shape.get_core()
-            # If merger contains the shape, remove it from the list
-            if merger_core.contains(shape_core):
+            if fast_merger and type(shape_core) is graph_shape:
+                if merger_core is shape_core:
+                    contained = True
+                    aligned = False
+                else:
+                    shape_lpp = shape_core.lpp
+                    same_lpp = (
+                        merger_lpp is shape_lpp or
+                        (merger_lpp[0] == shape_lpp[0] and
+                         (merger_lpp[1] is None or
+                          shape_lpp[1] is None or
+                          merger_lpp[1] == shape_lpp[1]))
+                    )
+                    sll, sur = shape_core._rect
+                    contained = (
+                        same_lpp and
+                        sll.x >= mll.x and sur.x <= mur.x and
+                        sll.y >= mll.y and sur.y <= mur.y
+                    )
+                    aligned = False
+                    if same_lpp and not contained:
+                        x_overlaps = (
+                            (sll.x <= mll.x <= sur.x) or
+                            (sll.x <= mur.x <= sur.x) or
+                            (mll.x <= sll.x <= mur.x) or
+                            (mll.x <= sur.x <= mur.x)
+                        )
+                        if x_overlaps:
+                            y_overlaps = (
+                                (sll.y <= mll.y <= sur.y) or
+                                (sll.y <= mur.y <= sur.y) or
+                                (mll.y <= sll.y <= mur.y) or
+                                (mll.y <= sur.y <= mur.y)
+                            )
+                            aligned = (
+                                y_overlaps and
+                                ((mll.x == sll.x and mur.x == sur.x) or
+                                 (mll.y == sll.y and mur.y == sur.y))
+                            )
+            else:
+                contained = merger_core.contains(shape_core)
+                aligned = (not contained and
+                           merger_core.aligns(shape_core))
+
+            if contained:
                 shape_list.remove(shape)
-            # If the merger aligns with the shape, expand the merger and remove
-            # the shape from the list
-            elif merger_core.aligns(shape_core):
+            elif aligned:
                 merger.bbox([shape])
                 merger_core.bbox([shape_core])
                 shape_list.remove(shape)
+                if fast_merger:
+                    mll, mur = merger_core._rect
 
 
     def find_pins(self, pin_name):
