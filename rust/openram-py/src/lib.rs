@@ -306,16 +306,86 @@ impl GdsLayout {
         srefs: Vec<(String, f64, f64, Option<bool>, Option<f64>, Option<f64>)>,
         texts: Vec<(String, i16, i16, f64, f64, Option<bool>, Option<f64>, Option<f64>)>,
     ) {
+        self.add_structure_spliced(name, boundaries, srefs, texts, Vec::new(), None, 1.0)
+    }
+
+    /// add_structure with store-backed pin groups spliced in. splices:
+    /// (boundary_index, text_index, group, deterministic, pin_name) in
+    /// recording order (indices non-decreasing); each group's emitted
+    /// boundaries/texts are inserted at those positions, exactly where
+    /// the per-pin bridge would have appended them. scale is the
+    /// collector's layoutUnitsPerMicron.
+    #[allow(clippy::too_many_arguments)]
+    fn add_structure_spliced(
+        &mut self,
+        name: &str,
+        boundaries: Vec<(i16, i16, Vec<f64>)>,
+        srefs: Vec<(String, f64, f64, Option<bool>, Option<f64>, Option<f64>)>,
+        texts: Vec<(String, i16, i16, f64, f64, Option<bool>, Option<f64>, Option<f64>)>,
+        splices: Vec<(usize, usize, u32, bool, String)>,
+        store: Option<PyRef<'_, PinStore>>,
+        scale: f64,
+    ) {
+        let emitted: Vec<(Vec<openram_core::gds::Boundary>, Vec<openram_core::gds::Text>)> =
+            match store {
+                Some(st) => splices
+                    .iter()
+                    .map(|(_, _, g, det, pin_name)| st.store.emit_gds(*g, *det, scale, pin_name))
+                    .collect(),
+                None => Vec::new(),
+            };
+
+        let mut out_boundaries =
+            Vec::with_capacity(boundaries.len() + emitted.iter().map(|e| e.0.len()).sum::<usize>());
+        {
+            let mut si = 0;
+            for (i, (layer, purpose, flat)) in boundaries.iter().enumerate() {
+                while si < splices.len() && splices[si].0 == i {
+                    out_boundaries.extend(emitted[si].0.iter().cloned());
+                    si += 1;
+                }
+                out_boundaries.push(openram_core::gds::Boundary {
+                    layer: *layer,
+                    purpose: *purpose,
+                    coords: flat.chunks_exact(2).map(|c| (c[0], c[1])).collect(),
+                });
+            }
+            while si < splices.len() {
+                out_boundaries.extend(emitted[si].0.iter().cloned());
+                si += 1;
+            }
+        }
+
+        let mut out_texts =
+            Vec::with_capacity(texts.len() + emitted.iter().map(|e| e.1.len()).sum::<usize>());
+        {
+            let mut si = 0;
+            for (i, (string, layer, purpose, x, y, strans, mag, angle)) in
+                texts.iter().enumerate()
+            {
+                while si < splices.len() && splices[si].1 == i {
+                    out_texts.extend(emitted[si].1.iter().cloned());
+                    si += 1;
+                }
+                out_texts.push(openram_core::gds::Text {
+                    layer: *layer,
+                    purpose: *purpose,
+                    xy: (*x, *y),
+                    string: string.clone(),
+                    strans: *strans,
+                    mag: *mag,
+                    angle: *angle,
+                });
+            }
+            while si < splices.len() {
+                out_texts.extend(emitted[si].1.iter().cloned());
+                si += 1;
+            }
+        }
+
         let s = openram_core::gds::Structure {
             name: name.to_string(),
-            boundaries: boundaries
-                .into_iter()
-                .map(|(layer, purpose, flat)| openram_core::gds::Boundary {
-                    layer,
-                    purpose,
-                    coords: flat.chunks_exact(2).map(|c| (c[0], c[1])).collect(),
-                })
-                .collect(),
+            boundaries: out_boundaries,
             srefs: srefs
                 .into_iter()
                 .map(|(sname, x, y, strans, mag, angle)| openram_core::gds::Sref {
@@ -326,20 +396,7 @@ impl GdsLayout {
                     angle,
                 })
                 .collect(),
-            texts: texts
-                .into_iter()
-                .map(|(string, layer, purpose, x, y, strans, mag, angle)| {
-                    openram_core::gds::Text {
-                        layer,
-                        purpose,
-                        xy: (x, y),
-                        string,
-                        strans,
-                        mag,
-                        angle,
-                    }
-                })
-                .collect(),
+            texts: out_texts,
         };
         self.layout.add_structure(s);
     }
@@ -425,6 +482,29 @@ impl PinStore {
     /// tech lpp (pin_sort_key component).
     fn add_layer(&mut self, name: &str, lpp_str: &str) -> u32 {
         self.store.add_layer(name, lpp_str)
+    }
+
+    /// GDS emission spec for a layer (pin_layout.gds_write_file's layer
+    /// resolution, computed Python-side).
+    fn set_emit_spec(
+        &mut self,
+        layer: u32,
+        box_layer: i16,
+        box_purpose: i16,
+        second: Option<(i16, i16)>,
+        label_purpose: i16,
+        zoom: Option<f64>,
+    ) {
+        self.store.set_emit_spec(
+            layer,
+            openram_core::pin_store::EmitSpec {
+                layer: box_layer,
+                purpose: box_purpose,
+                second,
+                label_purpose,
+                zoom,
+            },
+        );
     }
 
     /// Layer table as (name, lpp_str) rows, indexed by layer id.

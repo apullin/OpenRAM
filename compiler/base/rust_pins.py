@@ -108,6 +108,20 @@ class _store_state:
         lid = self.rs_store.add_layer(name, lpp_str)
         self.layer_ids[name] = lid
         self.layer_names.append(name)
+        # Ship the GDS emission spec so whole groups can be emitted in
+        # Rust. The isinstance/falsy coercions mirror _export_collector's
+        # addBox/addText argument handling.
+        (layer_num, purpose, second, label_purpose, zoom) = _layer_spec(name)
+        if second is not None:
+            second = (second[0],
+                      second[1] if isinstance(second[1], int) else 0)
+        self.rs_store.set_emit_spec(
+            lid,
+            layer_num,
+            purpose if isinstance(purpose, int) else 0,
+            second,
+            label_purpose if isinstance(label_purpose, int) else 0,
+            float(zoom) if zoom else None)
         return lid
 
 
@@ -180,6 +194,12 @@ class pin_group:
         """ Emit the group's shapes and labels; same records in the same
         order as per-pin pin_layout.gds_write_file. """
         from openram import OPTS
+        add_store = getattr(newLayout, "add_store_pins", None)
+        if add_store is not None:
+            # _export_collector: record a splice point; the whole group is
+            # emitted in Rust when the structure is assembled.
+            add_store(self)
+            return
         data = self.state.rs_store.emit(self.gid, bool(OPTS.deterministic))
         names = self.state.layer_names
         name = self.name

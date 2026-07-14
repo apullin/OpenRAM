@@ -11,12 +11,25 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::gds::{Boundary, Text};
 use crate::snap::py_round;
+
+/// GDS emission spec per layer (pin_layout.gds_write_file's layer
+/// resolution, computed Python-side from the tech).
+#[derive(Clone, Copy)]
+pub struct EmitSpec {
+    pub layer: i16,
+    pub purpose: i16,
+    pub second: Option<(i16, i16)>,
+    pub label_purpose: i16,
+    pub zoom: Option<f64>,
+}
 
 pub struct LayerInfo {
     pub name: String,
     /// Exact Python str() of the tech lpp, used in pin_sort_key.
     pub lpp_str: String,
+    pub emit: Option<EmitSpec>,
 }
 
 #[derive(Clone, Copy)]
@@ -90,9 +103,14 @@ impl PinStore {
         self.layers.push(LayerInfo {
             name: name.to_string(),
             lpp_str: lpp_str.to_string(),
+            emit: None,
         });
         self.layer_ids.insert(name.to_string(), id);
         id
+    }
+
+    pub fn set_emit_spec(&mut self, layer: u32, spec: EmitSpec) {
+        self.layers[layer as usize].emit = Some(spec);
     }
 
     pub fn new_group(&mut self) -> u32 {
@@ -337,11 +355,9 @@ impl PinStore {
         Some(b)
     }
 
-    /// Emission order and payload for pin_layout.gds_write_file:
-    /// (layer, ll, width, height, center), sorted by pin_sort_key when
-    /// deterministic (name is constant within a group; str(lpp) then the
-    /// rect coordinates).
-    pub fn emit(&self, g: u32, deterministic: bool) -> Vec<(u32, f64, f64, f64, f64, f64, f64)> {
+    /// pin_sort_key order when deterministic (name is constant within a
+    /// group; str(lpp) then the rect coordinates), else insertion order.
+    fn emit_order(&self, g: u32, deterministic: bool) -> Vec<usize> {
         let pins = &self.groups[g as usize].pins;
         let mut order: Vec<usize> = (0..pins.len()).collect();
         if deterministic {
@@ -357,6 +373,13 @@ impl PinStore {
             });
         }
         order
+    }
+
+    /// Emission payload for the Python bridge (per pin: layer, ll, width,
+    /// height, center in microns).
+    pub fn emit(&self, g: u32, deterministic: bool) -> Vec<(u32, f64, f64, f64, f64, f64, f64)> {
+        let pins = &self.groups[g as usize].pins;
+        self.emit_order(g, deterministic)
             .into_iter()
             .map(|i| {
                 let p = &pins[i];
@@ -371,6 +394,63 @@ impl PinStore {
                 )
             })
             .collect()
+    }
+
+    /// GDS elements for the whole group: what the per-pin bridge produced
+    /// through _export_collector.addBox/addText, in the same order.
+    /// scale is the collector's layoutUnitsPerMicron (1.0 / user_unit);
+    /// coordinate conversion is round(v * scale, 0) like userUnits.
+    pub fn emit_gds(
+        &self,
+        g: u32,
+        deterministic: bool,
+        scale: f64,
+        name: &str,
+    ) -> (Vec<Boundary>, Vec<Text>) {
+        let pins = &self.groups[g as usize].pins;
+        let order = self.emit_order(g, deterministic);
+        let mut boundaries = Vec::with_capacity(order.len());
+        let mut texts = Vec::with_capacity(order.len());
+        let db = |v: f64| py_round(v * scale, 0);
+        for i in order {
+            let p = &pins[i];
+            let spec = self.layers[p.layer as usize]
+                .emit
+                .expect("emit spec not set for layer");
+            let ox = db(p.llx);
+            let oy = db(p.lly);
+            let w = db((p.urx - p.llx).abs());
+            let h = db((p.ury - p.lly).abs());
+            let coords = vec![
+                (ox, oy),
+                (ox + w, oy),
+                (ox + w, oy + h),
+                (ox, oy + h),
+                (ox, oy),
+            ];
+            boundaries.push(Boundary {
+                layer: spec.layer,
+                purpose: spec.purpose,
+                coords: coords.clone(),
+            });
+            if let Some((l2, p2)) = spec.second {
+                boundaries.push(Boundary {
+                    layer: l2,
+                    purpose: p2,
+                    coords,
+                });
+            }
+            texts.push(Text {
+                layer: spec.layer,
+                purpose: spec.label_purpose,
+                xy: (db(0.5 * (p.llx + p.urx)), db(0.5 * (p.lly + p.ury))),
+                string: name.to_string(),
+                strans: Some(false),
+                mag: spec.zoom,
+                angle: None,
+            });
+        }
+        (boundaries, texts)
     }
 
     pub fn raw(&self, g: u32) -> &[StorePin] {
