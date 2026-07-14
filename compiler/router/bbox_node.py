@@ -52,10 +52,17 @@ class bbox_node:
         """ Iterate over shapes in the tree that overlap the given shape. """
 
         sll, sur = shape.rect
+        yield from self.iterate_rect(sll.x, sll.y, sur.x, sur.y,
+                                     check_done)
+
+
+    def iterate_rect(self, sllx, slly, surx, sury, check_done=False):
+        """Iterate over shapes that overlap the given rectangle bounds."""
+
         if self.is_leaf:
             ll, ur = self.bbox.rect
-            if check_done or (ll.x <= sur.x and sll.x <= ur.x and
-                              ll.y <= sur.y and sll.y <= ur.y):
+            if check_done or (ll.x <= surx and sllx <= ur.x and
+                              ll.y <= sury and slly <= ur.y):
                 yield self.bbox.shape
             return
 
@@ -67,8 +74,8 @@ class bbox_node:
         while stack:
             node = stack.pop()
             ll, ur = node.bbox.rect
-            if not (ll.x <= sur.x and sll.x <= ur.x and
-                    ll.y <= sur.y and sll.y <= ur.y):
+            if not (ll.x <= surx and sllx <= ur.x and
+                    ll.y <= sury and slly <= ur.y):
                 continue
             if node.is_leaf:
                 yield node.bbox.shape

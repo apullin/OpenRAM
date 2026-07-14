@@ -102,6 +102,44 @@ class graph_test(openram_test):
         self.assertEqual(graph._make_heuristic([])(graph_node((0, 0, 0))),
                          float("inf"))
 
+        class recording_tree:
+            def __init__(self, blockages=()):
+                self.blockages = blockages
+                self.bounds = []
+
+            def iterate_rect(self, *bounds):
+                self.bounds.append(bounds)
+                return iter(self.blockages)
+
+        probe_router = SimpleNamespace(get_lpp=lambda _z: source.lpp)
+        probe_graph = graph(probe_router)
+        probe_graph.source = source
+        probe_tree = recording_tree()
+        probe_graph.blockage_bbox_tree = probe_tree
+        probe_p1 = SimpleNamespace(x=4, y=3, z=0)
+        probe_p2 = SimpleNamespace(x=1, y=3, z=0)
+        self.assertFalse(probe_graph.is_probe_blocked(probe_p1, probe_p2))
+        self.assertEqual(probe_tree.bounds, [(1, 3, 4, 3)])
+
+        other_layer = shape("blocked", (2, 2), (3, 4), "m2")
+        probe_tree.blockages = [other_layer]
+        self.assertFalse(probe_graph.is_probe_blocked(probe_p1, probe_p2))
+
+        fixed_blockage = shape("blocked", (2, 2), (3, 4))
+        probe_tree.blockages = [fixed_blockage]
+        self.assertTrue(probe_graph.is_probe_blocked(probe_p1, probe_p2))
+
+        core_miss = shape(source.name, (10, 10), (11, 11))
+        inflated_miss = graph_shape(
+            source.name, [vector(0, 2), vector(5, 4)], "m1", core_miss)
+        probe_tree.blockages = [inflated_miss]
+        self.assertTrue(probe_graph.is_probe_blocked(probe_p1, probe_p2))
+
+        core_hit = shape(source.name, (2, 2), (3, 4))
+        inflated_hit = graph_shape(
+            source.name, [vector(0, 2), vector(5, 4)], "m1", core_hit)
+        probe_tree.blockages = [inflated_hit]
+        self.assertFalse(probe_graph.is_probe_blocked(probe_p1, probe_p2))
 
         via_nodes = [graph_node((0, 0, 0)), graph_node((0, 0, 1))]
         route_graph.graph_vias = []
@@ -311,6 +349,10 @@ class graph_test(openram_test):
                         ll.y <= qur.y and qll.y <= ur.y):
                     expected.append(item)
             actual = list(bulk.iterate_shape(query))
+            actual_bounds = list(bulk.iterate_rect(
+                qll.x, qll.y, qur.x, qur.y))
+            self.assertEqual([id(item) for item in actual_bounds],
+                             [id(item) for item in actual])
             self.assertEqual([id(item) for item in actual],
                              [id(item) for item in expected])
             self.assertEqual(result_ids(actual),
@@ -325,6 +367,13 @@ class graph_test(openram_test):
                          [tree_shapes[0]])
         self.assertEqual(list(leaf.iterate_shape(outside_shape, True)),
                          [tree_shapes[0]])
+        self.assertEqual(
+            list(leaf.iterate_rect(100, 100, 101, 101)), [])
+        self.assertEqual(
+            list(leaf.iterate_rect(100, 100, 101, 101, True)),
+            [tree_shapes[0]])
+        self.assertEqual(
+            list(bulk.iterate_rect(100, 100, 101, 101, True)), [])
         self.assertEqual(list(bulk.iterate_point(outside_point, True)), [])
         self.assertEqual(list(bulk.iterate_shape(outside_shape, True)), [])
 

@@ -11,7 +11,6 @@ from openram.tech import drc
 from .bbox import bbox
 from .bbox_node import bbox_node
 from .graph_node import graph_node
-from .graph_probe import graph_probe
 from .graph_utils import snap
 
 
@@ -78,13 +77,18 @@ class graph:
         This function assumes that p1 and p2 are on the same layer.
         """
 
-        probe_shape = graph_probe(p1, p2, self.router.get_lpp(p1.z))
-        pll, pur = probe_shape.rect
+        p1x, p1y = p1.x, p1.y
+        p2x, p2y = p2.x, p2.y
+        pll_x = min(p1x, p2x)
+        pll_y = min(p1y, p2y)
+        pur_x = max(p1x, p2x)
+        pur_y = max(p1y, p2y)
+        probe_lpp = self.router.get_lpp(p1.z)
         # Check if any blockage blocks this probe
-        for blockage in self.blockage_bbox_tree.iterate_shape(probe_shape):
-            bll, bur = blockage.rect
+        for blockage in self.blockage_bbox_tree.iterate_rect(
+                pll_x, pll_y, pur_x, pur_y):
             # Not on the same layer
-            if not blockage.same_lpp(blockage.lpp, probe_shape.lpp):
+            if not blockage.same_lpp(blockage.lpp, probe_lpp):
                 continue
             # Probe is blocked if the shape isn't routable
             if not self.is_routable(blockage):
@@ -92,7 +96,8 @@ class graph:
             blockage = blockage.get_core()
             bll, bur = blockage.rect
             # Not overlapping
-            if bll.x > pur.x or pll.x > bur.x or bll.y > pur.y or pll.y > bur.y:
+            if (bll.x > pur_x or pll_x > bur.x or
+                    bll.y > pur_y or pll_y > bur.y):
                 return True
         return False
 
