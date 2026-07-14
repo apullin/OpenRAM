@@ -127,16 +127,28 @@ impl GdsLayout {
         }
     }
 
-    /// Flattened boundaries on (layer, purpose) in user units;
-    /// purpose < 0 matches any datatype.
-    fn get_all_shapes(&self, py: Python<'_>, layer: i16, purpose: i16) -> Vec<(f64, f64, f64, f64)> {
-        py.detach(|| {
-            self.layout
-                .get_all_shapes(layer, purpose)
+    /// Layer numbers in first-seen order (gdsMill layerNumbersInUse).
+    fn layers_in_use(&self) -> Vec<i16> {
+        self.layout.layers_in_use.clone()
+    }
+
+    /// Root-level text labels: (string, layer, purpose, x_db, y_db).
+    fn root_texts(&self) -> Vec<(String, i16, i16, f64, f64)> {
+        match self.layout.root {
+            Some(i) => self.layout.structures[i]
+                .texts
                 .iter()
-                .map(|r| (r.llx, r.lly, r.urx, r.ury))
-                .collect()
-        })
+                .map(|t| (t.string.clone(), t.layer, t.purpose, t.xy.0, t.xy.1))
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Flattened boundaries on (layer, purpose) in user units;
+    /// purpose < 0 matches any datatype. Rectangles are 4-value lists,
+    /// polygons are flattened point lists (gdsMill-compatible).
+    fn get_all_shapes(&self, py: Python<'_>, layer: i16, purpose: i16) -> Vec<Vec<f64>> {
+        py.detach(|| self.layout.get_all_shapes(layer, purpose))
     }
 }
 
