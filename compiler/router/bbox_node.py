@@ -4,6 +4,8 @@
 # All rights reserved.
 #
 
+from operator import itemgetter
+
 class bbox_node:
     """
     This class represents a node in the bbox tree structure. Bbox trees are
@@ -122,30 +124,25 @@ class bbox_node:
 
         if not boxes:
             return None
-        indexed = list(enumerate(boxes))
-
-        def centroid(item, axis):
-            _index, box = item
+        indexed = []
+        for index, box in enumerate(boxes):
             ll, ur = box.rect
-            return ll[axis] + ur[axis]
+            indexed.append((index, box,
+                            ll.x + ur.x, ll.y + ur.y,
+                            ll.x, ll.y, ur.x, ur.y))
 
         def build_items(items):
             if len(items) == 1:
                 return cls(items[0][1])
 
-            x_centers = [centroid(item, 0) for item in items]
-            y_centers = [centroid(item, 1) for item in items]
+            x_centers = [item[2] for item in items]
+            y_centers = [item[3] for item in items]
             x_span = max(x_centers) - min(x_centers)
             y_span = max(y_centers) - min(y_centers)
-            axis = int(y_span > x_span)
-            other_axis = 1 - axis
-
-            def sort_key(item):
-                index, box = item
-                ll, ur = box.rect
-                return (centroid(item, axis),
-                        centroid(item, other_axis),
-                        ll.x, ll.y, ur.x, ur.y, index)
+            if y_span > x_span:
+                sort_key = itemgetter(3, 2, 4, 5, 6, 7, 0)
+            else:
+                sort_key = itemgetter(2, 3, 4, 5, 6, 7, 0)
 
             ordered = sorted(items, key=sort_key)
             middle = len(ordered) // 2

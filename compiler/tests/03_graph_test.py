@@ -733,6 +733,62 @@ class graph_test(openram_test):
 
         ordered_shapes = list(leaf_shapes(bulk))
 
+        def legacy_leaf_boxes(boxes):
+            indexed_boxes = list(enumerate(boxes))
+
+            def centroid(item, axis):
+                _index, item_bbox = item
+                ll, ur = item_bbox.rect
+                return ll[axis] + ur[axis]
+
+            def order(items):
+                if len(items) == 1:
+                    return [items[0][1]]
+                x_centers = [centroid(item, 0) for item in items]
+                y_centers = [centroid(item, 1) for item in items]
+                x_span = max(x_centers) - min(x_centers)
+                y_span = max(y_centers) - min(y_centers)
+                axis = int(y_span > x_span)
+                other_axis = 1 - axis
+
+                def sort_key(item):
+                    index, item_bbox = item
+                    ll, ur = item_bbox.rect
+                    return (centroid(item, axis),
+                            centroid(item, other_axis),
+                            ll.x, ll.y, ur.x, ur.y, index)
+
+                ordered = sorted(items, key=sort_key)
+                middle = len(ordered) // 2
+                return order(ordered[:middle]) + order(ordered[middle:])
+
+            return order(indexed_boxes)
+
+        def leaf_boxes(node):
+            if node.is_leaf:
+                yield node.bbox
+                return
+            yield from leaf_boxes(node.left)
+            yield from leaf_boxes(node.right)
+
+        tied_boxes = [
+            router_bbox(shape("tie_0", (-2, -1), (2, 1))),
+            router_bbox(shape("tie_1", (-1, -2), (1, 2))),
+            router_bbox(shape("tie_2", (0, 0), (2, 2))),
+            router_bbox(shape("tie_3", (-2, -2), (0, 0))),
+        ]
+        tied_boxes.append(tied_boxes[1])
+        y_major_boxes = [
+            router_bbox(shape("y_major_0", (0, 0), (1, 1))),
+            router_bbox(shape("y_major_1", (0, 10), (1, 11))),
+            router_bbox(shape("y_major_2", (1, 20), (2, 21))),
+        ]
+        for boxes in (tree_boxes, tied_boxes, y_major_boxes):
+            expected_boxes = legacy_leaf_boxes(boxes)
+            actual_boxes = list(leaf_boxes(bbox_node.build(boxes)))
+            self.assertEqual([id(item) for item in actual_boxes],
+                             [id(item) for item in expected_boxes])
+
         def stack_results(method, *args):
             flat_tree = bulk._flat_tree
             bulk._flat_tree = None
