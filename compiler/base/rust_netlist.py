@@ -14,6 +14,11 @@ from openram import OPTS
 
 def export_netlist(design):
     from openram.router.rust_router import load_openram_rs
+    from openram.base.hierarchy_spice import netlist_rev
+    rev = netlist_rev[0]
+    cache = getattr(design, "_rust_netlist_cache", None)
+    if cache is not None and cache[0] == rev:
+        return cache[1]
     rs = load_openram_rs()
     db = rs.NetlistDb()
     memo = {}
@@ -59,4 +64,5 @@ def export_netlist(design):
         return mid
 
     db.set_top(export(design))
+    design._rust_netlist_cache = (rev, db)
     return db

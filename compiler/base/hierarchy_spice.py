@@ -29,6 +29,13 @@ from .power_data import power_data
 from .logical_effort import convert_relative_c_to_farad, convert_farad_to_relative_c
 
 
+# Global netlist revision, bumped by any mutation the spice writers read
+# (pins, connections, comments, pin types, trim sets). The Rust netlist
+# export is memoized against it, so the three save-time writes (sp,
+# trimmed, lvs) share one export unless something changed in between.
+netlist_rev = [0]
+
+
 class spice():
     """
     This provides a set of useful generic types for hierarchy
@@ -96,11 +103,13 @@ class spice():
             self.comments = []
 
         self.comments.append(comment)
+        netlist_rev[0] += 1
 
     def add_pin(self, name, pin_type="INOUT"):
         """ Adds a pin to the pins list. Default type is INOUT signal. """
         debug.check(name not in self.pins, "cannot add duplicate spice pin {}".format(name))
         self.pins[name] = pin_spice(name, pin_type, self)
+        netlist_rev[0] += 1
 
     def add_pin_list(self, pin_list, pin_type="INOUT"):
         """ Adds a pin_list to the pins list """
@@ -135,6 +144,7 @@ class spice():
               \n pin names={}\n port types={}".format(self.name, list(self.pins), type_list))
         for pin, type in zip(self.pins.values(), type_list):
             pin.set_type(type)
+        netlist_rev[0] += 1
 
     def get_pin_type(self, name):
         """ Returns the type of the signal pin. """
@@ -219,6 +229,7 @@ class spice():
         self._inst_conns_cache = None
         self._inst_conns_lower_cache = None
         self._net_alias_index = None
+        netlist_rev[0] += 1
 
     def create_nets(self, names_list):
         nets = []
