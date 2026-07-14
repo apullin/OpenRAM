@@ -7,6 +7,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from testutils import *
@@ -26,6 +27,9 @@ class graph_test(openram_test):
         from openram.router.graph import graph
         from openram.router.graph_shape import graph_shape
         from openram.router.graph_node import graph_node
+        from openram.router.bbox import bbox as router_bbox
+        from openram.router.bbox_node import bbox_node
+        from openram.router import graph_utils
 
         def shape(name, ll, ur):
             return graph_shape(name,
@@ -80,6 +84,54 @@ class graph_test(openram_test):
         self.assertEqual(removed.neighbors, [])
         self.assertNotIn(removed, left.neighbors)
         self.assertNotIn(removed, right.neighbors)
+
+        class containment_shape(graph_shape):
+            def __eq__(self, _other):
+                raise AssertionError("contains must not call equality")
+
+        container = containment_shape("container",
+                                      [vector(0, 0), vector(4, 4)],
+                                      "m1")
+        inside = shape("inside", (1, 1), (2, 2))
+        equivalent = shape("equivalent", (0, 0), (4, 4))
+        other_layer = graph_shape("other_layer",
+                                  [vector(0, 0), vector(4, 4)],
+                                  "m2")
+        self.assertTrue(container.contains(container))
+        self.assertTrue(container.contains(inside))
+        self.assertTrue(equivalent.contains(shape("same", (0, 0), (4, 4))))
+        self.assertFalse(inside.contains(container))
+        self.assertFalse(container.contains(other_layer))
+
+        left_bbox = router_bbox(shape("left_bbox", (0, 0), (2, 2)))
+        right_bbox = router_bbox(shape("right_bbox", (4, 0), (6, 2)))
+        root = bbox_node(left_bbox.merge(right_bbox),
+                         bbox_node(left_bbox), bbox_node(right_bbox))
+        inserted_bbox = router_bbox(shape("inserted_bbox", (8, 0), (10, 2)))
+        area_calls = []
+        original_area = router_bbox.area
+
+        def counted_area(item):
+            area_calls.append(item)
+            return original_area(item)
+
+        with patch.object(router_bbox, "area", counted_area):
+            self.assertEqual(root.get_costs(inserted_bbox), (20, 28, 16))
+        self.assertEqual(len(area_calls), 7)
+
+        original_drc = graph_utils.tech.drc
+        try:
+            graph_utils.tech.drc = {"grid": 0.005}
+            self.assertEqual(graph_utils.snap(1.23456), 1.235)
+            self.assertEqual(graph_utils.snap(vector(1.23456, 2.34567)),
+                             vector(1.235, 2.346))
+            graph_utils.tech.drc = {"grid": 0.1}
+            self.assertEqual(graph_utils.snap(1.23456), 1.2)
+            graph_utils.tech.drc = {"grid": 0.0025}
+            self.assertEqual(graph_utils.snap(1.23456), 1.2346)
+        finally:
+            graph_utils.tech.drc = original_drc
+            graph_utils.snap(0)
 
         openram.end_openram()
 
