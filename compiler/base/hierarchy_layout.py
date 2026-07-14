@@ -24,6 +24,7 @@ from openram import OPTS
 from .vector import vector
 from .pin_layout import pin_layout
 from .pin_layout import pin_sort_key
+from .rust_pins import pin_group, copy_layout_pin_rust
 from .utils import round_to_grid, ceil
 from . import geometry
 
@@ -368,6 +369,11 @@ class layout():
             for pin_set in self.pin_map.values():
                 if len(pin_set) == 0:
                     continue
+                if type(pin_set) is pin_group:
+                    b = pin_set.bounds()
+                    lowestx = min(b[0], lowestx)
+                    lowesty = min(b[1], lowesty)
+                    continue
                 lowestx = min(min(pin.lx() for pin in pin_set), lowestx)
                 lowesty = min(min(pin.by() for pin in pin_set), lowesty)
 
@@ -391,6 +397,11 @@ class layout():
         if len(self.pin_map) > 0:
             for pin_set in self.pin_map.values():
                 if len(pin_set) == 0:
+                    continue
+                if type(pin_set) is pin_group:
+                    b = pin_set.bounds()
+                    highestx = max(b[2], highestx)
+                    highesty = max(b[3], highesty)
                     continue
                 highestx = max(max(pin.rx() for pin in pin_set), highestx)
                 highesty = max(max(pin.uy() for pin in pin_set), highesty)
@@ -459,6 +470,10 @@ class layout():
         for pin_name in self.pin_map.keys():
             # All the pins are absolute coordinates that need to be updated.
             pin_list = self.pin_map[pin_name]
+            if type(pin_list) is pin_group:
+                # In-place mutation below; convert back to Python pins.
+                pin_list = pin_list.pythonize()
+                self.pin_map[pin_name] = pin_list
             for pin in pin_list:
                 pin.rect = [pin.ll() - offset, pin.ur() - offset]
 
@@ -649,6 +664,11 @@ class layout():
         You can optionally rename the pin to a new name.
         You can optionally add an offset vector by which to move the pin.
         """
+        if getattr(OPTS, "use_rust_router", False):
+            if copy_layout_pin_rust(self, instance, pin_name, new_name,
+                                    relative_offset):
+                return
+
         pins = instance.get_pins(pin_name)
 
         if len(pins) == 0:
@@ -1154,6 +1174,14 @@ class layout():
         if not height:
             height = drc["minwidth_{0}".format(layer)]
 
+        group = self.pin_map.get(text)
+        if type(group) is pin_group:
+            if isinstance(layer, str):
+                return group.add(layer, offset, width, height)
+            # lpp layers resolve through pin_layout; give the group back
+            # to the Python path.
+            self.pin_map[text] = group.pythonize()
+
         new_pin = pin_layout(text,
                              [offset, offset + vector(width, height)],
                              layer)
@@ -1505,10 +1533,15 @@ class layout():
         for i in self.objs:
             i.gds_write_file(gds_layout)
         for pin_name in self.pin_map.keys():
+            pin_set = self.pin_map[pin_name]
+            if type(pin_set) is pin_group:
+                # Store-side emission (sorted internally when deterministic)
+                pin_set.gds_write_file(gds_layout)
+                continue
             if OPTS.deterministic:
-                pins = sorted(self.pin_map[pin_name], key=pin_sort_key)
+                pins = sorted(pin_set, key=pin_sort_key)
             else:
-                pins = self.pin_map[pin_name]
+                pins = pin_set
             for pin in pins:
                 pin.gds_write_file(gds_layout)
 
