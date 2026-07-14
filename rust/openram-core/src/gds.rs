@@ -460,3 +460,44 @@ impl Layout {
         cell.map(|c| (unit * c[0], unit * c[1], unit * c[2], unit * c[3]))
     }
 }
+
+impl Layout {
+    pub fn new_empty(user_unit: f64) -> Layout {
+        Layout {
+            user_unit,
+            ..Default::default()
+        }
+    }
+
+    /// Add or replace a structure exported from the in-memory Python
+    /// layout. Boundary and text layers extend layers_in_use in the same
+    /// order a write+reparse round-trip would discover them (all of the
+    /// structure's boundaries, then its texts).
+    pub fn add_structure(&mut self, s: Structure) {
+        for b in &s.boundaries {
+            if !self.layers_in_use.contains(&b.layer) {
+                self.layers_in_use.push(b.layer);
+            }
+        }
+        for t in &s.texts {
+            if !self.layers_in_use.contains(&t.layer) {
+                self.layers_in_use.push(t.layer);
+            }
+        }
+        match self.index.get(&s.name) {
+            Some(&i) => self.structures[i] = s,
+            None => {
+                self.index.insert(s.name.clone(), self.structures.len());
+                self.structures.push(s);
+            }
+        }
+    }
+
+    pub fn has_structure(&self, name: &str) -> bool {
+        self.index.contains_key(name)
+    }
+
+    pub fn set_root(&mut self, name: &str) {
+        self.root = self.index.get(name).copied();
+    }
+}

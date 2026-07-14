@@ -1873,12 +1873,6 @@ class layout():
         """
         Get the bounding box from the GDS
         """
-        gds_filename = OPTS.openram_temp + "temp.gds"
-        # If didn't specify a gds blockage file, write it out to read the gds
-        # This isn't efficient, but easy for now
-        # Load the gds file and read in all the shapes
-        self.gds_write(gds_filename)
-
         rs = None
         if getattr(OPTS, "use_rust_router", False):
             from openram.router.rust_router import load_openram_rs
@@ -1886,12 +1880,18 @@ class layout():
 
         if rs is not None:
             if not self.bbox:
-                bounds = rs.GdsLayout(gds_filename).measure_boundary()
+                from openram.router.rust_gds import export_design
+                bounds = export_design(self).measure_boundary()
                 ll = vector(bounds[0], bounds[1])
                 ur = vector(bounds[2], bounds[3])
             else:
                 ll, ur = self.bbox
         else:
+            gds_filename = OPTS.openram_temp + "temp.gds"
+            # If didn't specify a gds blockage file, write it out to read
+            # the gds. This isn't efficient, but easy for now.
+            # Load the gds file and read in all the shapes
+            self.gds_write(gds_filename)
             layout = gdsMill.VlsiLayout(units=GDS["unit"])
             reader = gdsMill.Gds2reader(layout)
             reader.loadFromFile(gds_filename)

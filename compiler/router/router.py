@@ -85,15 +85,18 @@ class router(router_tech):
     def prepare_gds_reader(self):
         """ Write the current layout to a temporary file to read the layout. """
 
-        # NOTE: Avoid using this function if possible since it is too slow to
-        # write/read these files
-        self.design.gds_write(self.gds_filename)
         if getattr(OPTS, "use_rust_router", False):
             from .rust_router import load_openram_rs
             if load_openram_rs() is not None:
+                from .rust_gds import export_design
                 from .rust_gds import rust_layout
-                self.layout = rust_layout(self.gds_filename, units=GDS["unit"])
+                # Export the in-memory layout directly; no temp file needed
+                rust_gds = export_design(self.design)
+                self.layout = rust_layout(units=GDS["unit"], layout=rust_gds)
                 return
+        # NOTE: Avoid using this function if possible since it is too slow to
+        # write/read these files
+        self.design.gds_write(self.gds_filename)
         self.layout = gdsMill.VlsiLayout(units=GDS["unit"])
         self.reader = gdsMill.Gds2reader(self.layout)
         self.reader.loadFromFile(self.gds_filename)
