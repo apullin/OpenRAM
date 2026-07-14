@@ -28,6 +28,19 @@ class pin_layout:
     single shape.
     """
 
+    def copied(self):
+        """
+        Field-level copy for instance pin transforms: same result as
+        deepcopy for pin_layout (strings are shared, the rect vectors are
+        fresh so transform() can mutate them) without the copy-module
+        dispatch overhead.
+        """
+        new = self.__class__.__new__(self.__class__)
+        new.__dict__.update(self.__dict__)
+        ll, ur = self._rect
+        new._rect = [vector(ll.x, ll.y), vector(ur.x, ur.y)]
+        return new
+
     def __init__(self, name, rect, layer_name_pp):
         self.name = name
         # repack the rect as a vector, just in case
