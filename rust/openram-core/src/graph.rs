@@ -444,7 +444,16 @@ impl<'a> Graph<'a> {
         }
         self.node_ids = (0..n as u32).collect();
         self.neighbors = vec![Vec::new(); n];
-        self.removed = (0..n).map(|i| self.is_node_blocked(&self.nodes[i])).collect();
+        // Blockage marking is independent per node and by far the biggest
+        // part of graph construction; the results are order-independent,
+        // so parallelizing cannot change routing decisions.
+        {
+            use rayon::prelude::*;
+            self.removed = (0..n)
+                .into_par_iter()
+                .map(|i| self.is_node_blocked(&self.nodes[i]))
+                .collect();
+        }
 
         let mut previous_x: Vec<[i64; 2]> = vec![[-1, -1]; y_len]; // node index or -1
         let mut previous_x_positions: Vec<[i64; 2]> = vec![[-1, -1]; y_len];
