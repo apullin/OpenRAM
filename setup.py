@@ -91,6 +91,7 @@ setup(
     ],
     packages=packages,
     package_dir=package_dir,
+    package_data={"openram": ["VERSION"]},
     include_package_data=True,
     install_requires=reqs,
 )
