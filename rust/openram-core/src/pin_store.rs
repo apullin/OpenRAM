@@ -242,6 +242,32 @@ impl PinStore {
         ok
     }
 
+    /// Whole-array batch: one placement tuple per instance, in instance
+    /// order (dedup and insertion order match the per-instance calls).
+    pub fn copy_pins_batch(
+        &mut self,
+        g: u32,
+        placements: &[(u32, f64, f64, u8, u16)],
+        relx: f64,
+        rely: f64,
+    ) -> bool {
+        let masters = std::mem::take(&mut self.masters);
+        let mut ok = true;
+        'outer: for &(master, ox, oy, mirror, rotate) in placements {
+            for m in &masters[master as usize] {
+                match self.transform_pin(m, ox, oy, relx, rely, mirror, rotate) {
+                    Some(p) => self.push(g, p),
+                    None => {
+                        ok = false;
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        self.masters = masters;
+        ok
+    }
+
     /// Cross-store bulk copy: source group pins (already constructed) are
     /// re-transformed under the instance placement. idmap maps source layer
     /// ids to this store's layer ids.

@@ -474,6 +474,19 @@ impl PinStore {
             .copy_pins(g, master, ox, oy, relx, rely, mirror, rotate)
     }
 
+    /// Whole-array batch: (master, ox, oy, mirror, rotate) per instance
+    /// in instance order.
+    fn copy_pins_batch(
+        &mut self,
+        py: Python<'_>,
+        g: u32,
+        placements: Vec<(u32, f64, f64, u8, u16)>,
+        relx: f64,
+        rely: f64,
+    ) -> bool {
+        py.detach(|| self.store.copy_pins_batch(g, &placements, relx, rely))
+    }
+
     /// Cross-store variant: copy another store's group (e.g. the bitcell
     /// array's vdd pins into the bank) under the instance placement.
     /// idmap maps source layer ids into this store.

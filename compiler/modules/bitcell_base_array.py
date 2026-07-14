@@ -214,6 +214,11 @@ class bitcell_base_array(design):
                 pass
             
             
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.base.rust_pins import bulk_copy_supply_pins
+            if bulk_copy_supply_pins(self, self.insts, power_name, ground_name):
+                return
+
         for inst in self.insts:
             if power_name in inst.mod.get_pin_names():
                 self.copy_layout_pin(inst, power_name, new_name='vdd')
