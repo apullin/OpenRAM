@@ -117,9 +117,13 @@ class dff_array(design):
         else:
 
             # Add connections every 4 cells
+            # Keep the VDD via inside the DFF rail.  A via on this module's
+            # left boundary can violate M2 spacing to the right-edge Q pin of
+            # an abutted dff_array even though both arrays are clean alone.
+            # Centering it preserves the rail connection and cell abutment.
             for col in range(0, self.columns, 4):
                 vdd_pin=self.dff_insts[0, col].get_pin("vdd")
-                self.add_power_pin("vdd", vdd_pin.lc(), start_layer=vdd_pin.layer)
+                self.add_power_pin("vdd", vdd_pin.center(), start_layer=vdd_pin.layer)
 
             # Add connections every 4 cells
             for col in range(0, self.columns, 4):
