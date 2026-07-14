@@ -6,3 +6,4 @@ license = "BSD-3-Clause"
 description = "Compute kernels for the OpenRAM memory compiler (routing graph, A*)"
 
 [dependencies]
+rayon = "1"
