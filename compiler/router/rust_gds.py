@@ -26,6 +26,16 @@ class _export_collector:
         self.boundaries = []
         self.texts = []
         self.srefs = []
+        # (boundary_index, text_index, group, deterministic, name, state)
+        # recorded by store-backed pin groups; expanded Rust-side when the
+        # structure is assembled.
+        self.pin_splices = []
+
+    def add_store_pins(self, group):
+        from openram import OPTS
+        self.pin_splices.append((len(self.boundaries), len(self.texts),
+                                 group.gid, bool(OPTS.deterministic),
+                                 group.name, group.state))
 
     def userUnits(self, microns):
         # Same computation as vlsiLayout.userUnits
@@ -130,8 +140,7 @@ def export_design(design):
             cell_name = str(inst.mod.cell_name)
             if not rl.has_structure(cell_name):
                 _export_structures(inst.mod.gds, rl, None)
-        rl.add_structure(top, collector.boundaries, collector.srefs,
-                         collector.texts)
+        _add_collected_structure(rl, top, collector)
         rl.set_root(top)
         return rl
 
@@ -154,8 +163,12 @@ def export_design(design):
     staging = {}
     _build_walk(design, staging, units)
     for sname in order:
-        (boundaries, srefs, texts) = staging[sname]
-        rl.add_structure(sname, boundaries, srefs, texts)
+        entry = staging[sname]
+        if isinstance(entry, _export_collector):
+            _add_collected_structure(rl, sname, entry)
+        else:
+            (boundaries, srefs, texts) = entry
+            rl.add_structure(sname, boundaries, srefs, texts)
 
     root = str(design.gds.rootStructureName)
     if root.endswith("\x00"):
@@ -213,7 +226,22 @@ def _build_walk(mod, staging, units):
         _build_walk(inst.mod, staging, units)
     collector = _export_collector(units)
     mod.gds_write_file(collector)
-    staging[n] = (collector.boundaries, collector.srefs, collector.texts)
+    staging[n] = collector
+
+
+def _add_collected_structure(rl, name, collector):
+    """ Hand a collected structure to the Rust layout, expanding any
+    store-backed pin group splices there. """
+    if collector.pin_splices:
+        state = collector.pin_splices[0][5]
+        splices = [(b, t, gid, det, pin_name)
+                   for (b, t, gid, det, pin_name, _s) in collector.pin_splices]
+        rl.add_structure_spliced(name, collector.boundaries, collector.srefs,
+                                 collector.texts, splices, state.rs_store,
+                                 1.0 / collector.units[0])
+    else:
+        rl.add_structure(name, collector.boundaries, collector.srefs,
+                         collector.texts)
 
 
 def _convert_structure(s):
