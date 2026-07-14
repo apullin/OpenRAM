@@ -71,6 +71,33 @@ class sky130_custom_bitcell_graph_test(unittest.TestCase):
         self.assertIn(("wl", "br"), graph_edges)
         self.assertNotIn(("bl", "gnd"), graph_edges)
 
+    def test_storage_nodes_follow_custom_spice_names(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        config = (
+            repo_root
+            / "technology"
+            / "sky130"
+            / "tech"
+            / "tech_configs"
+            / "tech_custom_cell.py"
+        )
+        tree = ast.parse(config.read_text(encoding="utf-8"), filename=str(config))
+        storage_nets = self.read_assignment(
+            tree, "cell_properties.bitcell_1port.storage_nets"
+        )
+
+        spice = (
+            repo_root
+            / "technology"
+            / "sky130"
+            / "sp_lib"
+            / "sky130_custom_cell.sp"
+        )
+        spice_tokens = set(spice.read_text(encoding="utf-8").split())
+
+        self.assertEqual(storage_nets, ["Q", "Qbar"])
+        self.assertTrue(set(storage_nets).issubset(spice_tokens))
+
 
 if __name__ == "__main__":
     # The OpenRAM Makefile supplies technology-selection options to every
