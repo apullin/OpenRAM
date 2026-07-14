@@ -128,7 +128,7 @@ class setup_hold():
                           clk_times=[0, 0.1 * self.period, self.period, 2 * self.period],
                           data_values=[0, 1, 0, 1],
                           period=2 * self.period,
-                          slew=self.constrained_input_slew,
+                          slew=self.related_input_slew,
                           setup=0)
 
     def write_measures(self, mode, correct_value):
