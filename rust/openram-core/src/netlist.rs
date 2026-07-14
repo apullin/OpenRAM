@@ -136,10 +136,11 @@ impl NetlistDb {
         }
     }
 
-    /// sp_write: full file contents.
-    pub fn write_spice(&self, lvs: bool, trim: bool) -> String {
+    /// sp_write: full file contents. The header replaces the default
+    /// "*FIRST LINE IS A COMMENT" preamble (sram_1bank writes its own).
+    pub fn write_spice(&self, lvs: bool, trim: bool, header: Option<&str>) -> String {
         let mut out = String::with_capacity(1 << 20);
-        out.push_str("*FIRST LINE IS A COMMENT\n");
+        out.push_str(header.unwrap_or("*FIRST LINE IS A COMMENT\n"));
         if let Some(top) = self.top {
             let mut used: Vec<String> = Vec::new();
             self.write_module(top, &mut out, &mut used, lvs, trim);

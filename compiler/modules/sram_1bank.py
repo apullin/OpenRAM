@@ -710,17 +710,24 @@ class sram_1bank(design, verilog, lef):
         ############################################################
         # Spice circuit
         ############################################################
-        sp = open(sp_name, 'w')
+        header = ("**************************************************\n"
+                  "* OpenRAM generated memory.\n"
+                  "* Words: {}\n".format(self.num_words) +
+                  "* Data bits: {}\n".format(self.word_size) +
+                  "* Banks: {}\n".format(self.num_banks) +
+                  "* Column mux: {}:1\n".format(self.words_per_row) +
+                  "* Trimmed: {}\n".format(trim) +
+                  "* LVS: {}\n".format(lvs) +
+                  "**************************************************\n")
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.router.rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from openram.base.rust_netlist import export_netlist
+                export_netlist(self).write_spice(sp_name, lvs, trim, header)
+                return
 
-        sp.write("**************************************************\n")
-        sp.write("* OpenRAM generated memory.\n")
-        sp.write("* Words: {}\n".format(self.num_words))
-        sp.write("* Data bits: {}\n".format(self.word_size))
-        sp.write("* Banks: {}\n".format(self.num_banks))
-        sp.write("* Column mux: {}:1\n".format(self.words_per_row))
-        sp.write("* Trimmed: {}\n".format(trim))
-        sp.write("* LVS: {}\n".format(lvs))
-        sp.write("**************************************************\n")
+        sp = open(sp_name, 'w')
+        sp.write(header)
         # This causes unit test mismatch
 
         # sp.write("* Created: {0}\n".format(datetime.datetime.now()))
