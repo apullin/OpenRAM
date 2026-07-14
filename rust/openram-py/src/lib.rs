@@ -405,12 +405,157 @@ impl GdsLayout {
     }
 }
 
+/// Layout pin groups owned in Rust (hierarchy_layout.pin_map values for
+/// the copy_layout_pin bulk path). One store per design module.
+#[pyclass]
+struct PinStore {
+    store: openram_core::pin_store::PinStore,
+}
+
+#[pymethods]
+impl PinStore {
+    #[new]
+    fn new(grid: f64) -> Self {
+        PinStore {
+            store: openram_core::pin_store::PinStore::new(grid),
+        }
+    }
+
+    /// Intern a layer by name; lpp_str is the exact Python str() of the
+    /// tech lpp (pin_sort_key component).
+    fn add_layer(&mut self, name: &str, lpp_str: &str) -> u32 {
+        self.store.add_layer(name, lpp_str)
+    }
+
+    /// Layer table as (name, lpp_str) rows, indexed by layer id.
+    fn layer_table(&self) -> Vec<(String, String)> {
+        self.store
+            .layers
+            .iter()
+            .map(|l| (l.name.clone(), l.lpp_str.clone()))
+            .collect()
+    }
+
+    fn new_group(&mut self) -> u32 {
+        self.store.new_group()
+    }
+
+    /// Master pin list (layer id + post-snap rect) reused per instance.
+    fn intern_master(&mut self, pins: Vec<(u32, f64, f64, f64, f64)>) -> u32 {
+        let pins = pins
+            .into_iter()
+            .map(|(layer, llx, lly, urx, ury)| openram_core::pin_store::StorePin {
+                layer,
+                llx,
+                lly,
+                urx,
+                ury,
+            })
+            .collect();
+        self.store.intern_master(pins)
+    }
+
+    /// copy_layout_pin fast path: transform the master under the instance
+    /// placement into the group. False means a pin collapsed after
+    /// snapping; the caller must fall back to the Python path.
+    #[allow(clippy::too_many_arguments)]
+    fn copy_pins(
+        &mut self,
+        g: u32,
+        master: u32,
+        ox: f64,
+        oy: f64,
+        relx: f64,
+        rely: f64,
+        mirror: u8,
+        rotate: u16,
+    ) -> bool {
+        self.store
+            .copy_pins(g, master, ox, oy, relx, rely, mirror, rotate)
+    }
+
+    /// Cross-store variant: copy another store's group (e.g. the bitcell
+    /// array's vdd pins into the bank) under the instance placement.
+    /// idmap maps source layer ids into this store.
+    #[allow(clippy::too_many_arguments)]
+    fn copy_from(
+        &mut self,
+        src: PyRef<'_, PinStore>,
+        src_group: u32,
+        idmap: Vec<u32>,
+        ox: f64,
+        oy: f64,
+        relx: f64,
+        rely: f64,
+        mirror: u8,
+        rotate: u16,
+        g: u32,
+    ) -> bool {
+        self.store.copy_from(
+            src.store.raw(src_group),
+            &idmap,
+            ox,
+            oy,
+            relx,
+            rely,
+            mirror,
+            rotate,
+            g,
+        )
+    }
+
+    /// add_layout_pin into a store-backed group. Returns the snapped rect
+    /// for the Python pin handle, or None when the rect collapses (the
+    /// caller falls back to Python for the exact error behavior).
+    fn add_pin(
+        &mut self,
+        g: u32,
+        layer: u32,
+        ox: f64,
+        oy: f64,
+        w: f64,
+        h: f64,
+    ) -> Option<(f64, f64, f64, f64)> {
+        self.store.add_pin(g, layer, ox, oy, w, h)
+    }
+
+    fn group_len(&self, g: u32) -> usize {
+        self.store.group_len(g)
+    }
+
+    fn group_rev(&self, g: u32) -> u64 {
+        self.store.group_rev(g)
+    }
+
+    fn group_bounds(&self, g: u32) -> Option<(f64, f64, f64, f64)> {
+        self.store.bounds(g)
+    }
+
+    /// (layer id, llx, lly, width, height, cx, cy) per pin in emission
+    /// order (pin_sort_key sorted when deterministic).
+    fn emit(&self, py: Python<'_>, g: u32, deterministic: bool)
+            -> Vec<(u32, f64, f64, f64, f64, f64, f64)> {
+        py.detach(|| self.store.emit(g, deterministic))
+    }
+
+    /// (layer id, llx, lly, urx, ury) per pin in insertion order, for
+    /// materializing Python pin_layout handles.
+    fn materialize(&self, g: u32) -> Vec<(u32, f64, f64, f64, f64)> {
+        self.store
+            .raw(g)
+            .iter()
+            .map(|p| (p.layer, p.llx, p.lly, p.urx, p.ury))
+            .collect()
+    }
+}
+
 #[pymodule]
 fn openram_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
     m.add_class::<RouterStore>()?;
     m.add_class::<NetlistDb>()?;
     m.add_class::<GdsLayout>()?;
+    m.add_class::<PinStore>()?;
     m.add_function(wrap_pyfunction!(snap, m)?)?;
     Ok(())
 }

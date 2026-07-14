@@ -10,6 +10,7 @@ pub mod gds;
 pub mod gds_writer;
 pub mod graph;
 pub mod netlist;
+pub mod pin_store;
 pub mod router_store;
 pub mod shape;
 pub mod snap;
