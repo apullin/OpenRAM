@@ -6,6 +6,7 @@
 // exactly so that routes are reproducible across backends.
 
 pub mod bbox_tree;
+pub mod gds;
 pub mod graph;
 pub mod shape;
 pub mod snap;
