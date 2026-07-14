@@ -273,9 +273,29 @@ class graph_test(openram_test):
         def result_ids(items):
             return sorted(id(item) for item in items)
 
+        def leaf_shapes(node):
+            if node.is_leaf:
+                yield node.bbox.shape
+                return
+            if node.left:
+                yield from leaf_shapes(node.left)
+            if node.right:
+                yield from leaf_shapes(node.right)
+
+        ordered_shapes = list(leaf_shapes(bulk))
+
         for point in [vector(-3, -1), vector(1, 1),
                       vector(2, 2), vector(10, 10)]:
-            self.assertEqual(result_ids(bulk.iterate_point(point)),
+            expected = []
+            for item in ordered_shapes:
+                ll, ur = item.rect
+                if (ll.x <= point.x <= ur.x and
+                        ll.y <= point.y <= ur.y):
+                    expected.append(item)
+            actual = list(bulk.iterate_point(point))
+            self.assertEqual([id(item) for item in actual],
+                             [id(item) for item in expected])
+            self.assertEqual(result_ids(actual),
                              result_ids(incremental.iterate_point(point)))
         query_shapes = [
             shape("query_0", (1.5, 1.5), (2.5, 2.5)),
@@ -283,8 +303,30 @@ class graph_test(openram_test):
             shape("query_2", (8, 8), (9, 9)),
         ]
         for query in query_shapes:
-            self.assertEqual(result_ids(bulk.iterate_shape(query)),
+            qll, qur = query.rect
+            expected = []
+            for item in ordered_shapes:
+                ll, ur = item.rect
+                if (ll.x <= qur.x and qll.x <= ur.x and
+                        ll.y <= qur.y and qll.y <= ur.y):
+                    expected.append(item)
+            actual = list(bulk.iterate_shape(query))
+            self.assertEqual([id(item) for item in actual],
+                             [id(item) for item in expected])
+            self.assertEqual(result_ids(actual),
                              result_ids(incremental.iterate_shape(query)))
+
+        leaf = bbox_node(tree_boxes[0])
+        outside_point = vector(100, 100)
+        outside_shape = shape("outside", (100, 100), (101, 101))
+        self.assertEqual(list(leaf.iterate_point(outside_point)), [])
+        self.assertEqual(list(leaf.iterate_shape(outside_shape)), [])
+        self.assertEqual(list(leaf.iterate_point(outside_point, True)),
+                         [tree_shapes[0]])
+        self.assertEqual(list(leaf.iterate_shape(outside_shape, True)),
+                         [tree_shapes[0]])
+        self.assertEqual(list(bulk.iterate_point(outside_point, True)), [])
+        self.assertEqual(list(bulk.iterate_shape(outside_shape, True)), [])
 
         original_drc = graph_utils.tech.drc
         try:

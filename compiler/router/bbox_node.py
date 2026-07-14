@@ -23,44 +23,60 @@ class bbox_node:
         """ Iterate over shapes in the tree that overlap the given point. """
 
         px, py = point.x, point.y
-        # Return this shape if it's a leaf
         if self.is_leaf:
             ll, ur = self.bbox.rect
-            if check_done or (ll.x <= px and px <= ur.x and ll.y <= py and py <= ur.y):
+            if check_done or (ll.x <= px <= ur.x and ll.y <= py <= ur.y):
                 yield self.bbox.shape
-        else:
-            # Check the left child
-            if self.left:
-                ll, ur = self.left.bbox.rect
-                if ll.x <= px and px <= ur.x and ll.y <= py and py <= ur.y:
-                    yield from self.left.iterate_point(point, True)
-            # Check the right child
-            if self.right:
-                ll, ur = self.right.bbox.rect
-                if ll.x <= px and px <= ur.x and ll.y <= py and py <= ur.y:
-                    yield from self.right.iterate_point(point, True)
+            return
+
+        stack = []
+        if self.right:
+            stack.append(self.right)
+        if self.left:
+            stack.append(self.left)
+        while stack:
+            node = stack.pop()
+            ll, ur = node.bbox.rect
+            if not (ll.x <= px <= ur.x and ll.y <= py <= ur.y):
+                continue
+            if node.is_leaf:
+                yield node.bbox.shape
+                continue
+            if node.right:
+                stack.append(node.right)
+            if node.left:
+                stack.append(node.left)
 
 
     def iterate_shape(self, shape, check_done=False):
         """ Iterate over shapes in the tree that overlap the given shape. """
 
         sll, sur = shape.rect
-        # Return this shape if it's a leaf
         if self.is_leaf:
             ll, ur = self.bbox.rect
-            if check_done or (ll.x <= sur.x and sll.x <= ur.x and ll.y <= sur.y and sll.y <= ur.y):
+            if check_done or (ll.x <= sur.x and sll.x <= ur.x and
+                              ll.y <= sur.y and sll.y <= ur.y):
                 yield self.bbox.shape
-        else:
-            # Check the left child
-            if self.left:
-                ll, ur = self.left.bbox.rect
-                if ll.x <= sur.x and sll.x <= ur.x and ll.y <= sur.y and sll.y <= ur.y:
-                    yield from self.left.iterate_shape(shape, True)
-            # Check the right child
-            if self.right:
-                ll, ur = self.right.bbox.rect
-                if ll.x <= sur.x and sll.x <= ur.x and ll.y <= sur.y and sll.y <= ur.y:
-                    yield from self.right.iterate_shape(shape, True)
+            return
+
+        stack = []
+        if self.right:
+            stack.append(self.right)
+        if self.left:
+            stack.append(self.left)
+        while stack:
+            node = stack.pop()
+            ll, ur = node.bbox.rect
+            if not (ll.x <= sur.x and sll.x <= ur.x and
+                    ll.y <= sur.y and sll.y <= ur.y):
+                continue
+            if node.is_leaf:
+                yield node.bbox.shape
+                continue
+            if node.right:
+                stack.append(node.right)
+            if node.left:
+                stack.append(node.left)
 
 
     @classmethod
