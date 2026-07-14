@@ -303,7 +303,12 @@ class spice():
             # If spice isn't defined, we dynamically generate one.
 
             # recursively write the modules
-            for mod in self.mods:
+            # (self.mods is a set; sort for reproducible netlist order)
+            if OPTS.deterministic:
+                mods = sorted(self.mods, key=lambda m: m.cell_name)
+            else:
+                mods = self.mods
+            for mod in mods:
                 if self.contains(mod, usedMODS):
                     continue
                 usedMODS.append(mod)

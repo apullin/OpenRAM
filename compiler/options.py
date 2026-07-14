@@ -200,6 +200,11 @@ class options(optparse.Values):
     # Random seed for functional simulation
     functional_seed = None
 
+    # Make compiles reproducible: iterate shape/module sets in a stable
+    # order and use a fixed functional-simulation seed. Two runs of the
+    # same config then produce identical outputs (modulo timestamps).
+    deterministic = True
+
     # Route the input/output pins to the perimeter
     perimeter_pins = True
 

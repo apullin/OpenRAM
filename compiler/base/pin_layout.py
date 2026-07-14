@@ -7,6 +7,16 @@
 #
 import math
 from openram import debug
+
+
+def pin_sort_key(pin):
+    """
+    Stable ordering key for pin/shape sets. Sets of pin_layout iterate in
+    hash order, which varies between runs; sorting with this key at the
+    points where set order leaks into outputs makes compiles reproducible.
+    """
+    ll, ur = pin.rect
+    return (str(pin.name), str(pin.lpp), ll.x, ll.y, ur.x, ur.y)
 from openram.tech import GDS, drc
 from openram.tech import layer, layer_indices
 from .vector import vector

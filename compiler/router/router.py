@@ -56,6 +56,20 @@ class router(router_tech):
         self.half_wire = snap(self.track_wire / 2)
 
 
+    @staticmethod
+    def iter_pins(pins):
+        """
+        Iterate a pin set in a stable order when deterministic mode is on.
+        Pin processing order decides blockage order, via/blockage naming,
+        and MST route order, so this makes routing reproducible.
+        """
+
+        if OPTS.deterministic:
+            from openram.base.pin_layout import pin_sort_key
+            return sorted(pins, key=pin_sort_key)
+        return pins
+
+
     def prepare_gds_reader(self):
         """ Write the current layout to a temporary file to read the layout. """
 
@@ -161,7 +175,7 @@ class router(router_tech):
         debug.info(4, "Finding blockages...")
 
         for lpp in [self.vert_lpp, self.horiz_lpp]:
-            layer_pins = [pin for pin in self.all_pins
+            layer_pins = [pin for pin in self.iter_pins(self.all_pins)
                           if pin.lpp[0] == lpp[0]]
             layer_blockages = [shape for shape in self.blockages
                                if shape.lpp[0] == lpp[0]]
@@ -239,9 +253,10 @@ class router(router_tech):
     def convert_vias(self):
         """ Convert vias that overlap a pin. """
 
+        ordered_pins = self.iter_pins(self.all_pins)
         for via in self.vias:
             via_core = via.get_core()
-            for pin in self.all_pins:
+            for pin in ordered_pins:
                 pin_core = pin.get_core()
                 via_core.lpp = pin_core.lpp
                 # If the via overlaps a pin, change its name
@@ -255,9 +270,10 @@ class router(router_tech):
 
         # NOTE: You need to run `convert_vias()` before since a blockage may
         # be connected to a pin through a via.
+        ordered_pins = self.iter_pins(self.all_pins)
         for blockage in self.blockages:
             blockage_core = blockage.get_core()
-            for pin in self.all_pins:
+            for pin in ordered_pins:
                 pin_core = pin.get_core()
                 # If the blockage overlaps a pin, change its name
                 if blockage_core.overlaps(pin_core):

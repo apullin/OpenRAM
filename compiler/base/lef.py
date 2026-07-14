@@ -111,6 +111,9 @@ class lef:
         # For each pin, remove the blockage and add the pin
         for pin_name in self.pins:
             pins = self.get_pins(pin_name)
+            if OPTS.deterministic:
+                from openram.base.pin_layout import pin_sort_key
+                pins = sorted(pins, key=pin_sort_key)
             for pin in pins:
                 inflated_pin = pin.inflated_pin(multiple=2)
                 continue_fragmenting = True

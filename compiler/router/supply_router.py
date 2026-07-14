@@ -63,14 +63,14 @@ class supply_router(router):
 
         # Add vdd and gnd pins as blockages as well
         # NOTE: This is done to make vdd and gnd pins DRC-safe
-        for pin in self.all_pins:
+        for pin in self.iter_pins(self.all_pins):
             self.blockages.append(self.inflate_shape(pin))
 
         # Route vdd and gnd
         routed_count = 0
         routed_max = len(self.pins[vdd_name]) + len(self.pins[gnd_name])
         for pin_name in [vdd_name, gnd_name]:
-            pins = self.pins[pin_name]
+            pins = self.iter_pins(self.pins[pin_name])
             # Route closest pins according to the minimum spanning tree
             for source, target in self.get_mst_pairs(list(pins)):
                 # Create the graph

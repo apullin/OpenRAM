@@ -23,6 +23,7 @@ from openram.sram_factory import factory
 from openram import OPTS
 from .vector import vector
 from .pin_layout import pin_layout
+from .pin_layout import pin_sort_key
 from .utils import round_to_grid, ceil
 from . import geometry
 
@@ -1111,7 +1112,7 @@ class layout():
         """
         Delete a labeled pin (or all pins of the same name)
         """
-        self.pin_map[text] = set()
+        self.pin_map[text] = {}
 
     def remove_layout_pins(self):
         """
@@ -1161,11 +1162,12 @@ class layout():
             # Check if there's a duplicate!
             # and if so, silently ignore it.
             # Rounding errors may result in some duplicates.
+            # NOTE: pin_map values are dicts used as insertion-ordered sets
+            # (same hash/eq dedup) so pin iteration is reproducible.
             if new_pin not in self.pin_map[text]:
-                self.pin_map[text].add(new_pin)
+                self.pin_map[text][new_pin] = new_pin
         except KeyError:
-            self.pin_map[text] = set()
-            self.pin_map[text].add(new_pin)
+            self.pin_map[text] = {new_pin: new_pin}
 
         return new_pin
 
@@ -1503,7 +1505,11 @@ class layout():
         for i in self.objs:
             i.gds_write_file(gds_layout)
         for pin_name in self.pin_map.keys():
-            for pin in self.pin_map[pin_name]:
+            if OPTS.deterministic:
+                pins = sorted(self.pin_map[pin_name], key=pin_sort_key)
+            else:
+                pins = self.pin_map[pin_name]
+            for pin in pins:
                 pin.gds_write_file(gds_layout)
 
         # If it's not a premade cell
