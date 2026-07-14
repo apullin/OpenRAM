@@ -30,6 +30,11 @@ class supply_router(router):
 
     def route(self, vdd_name="vdd", gnd_name="gnd"):
         """ Route the given pins in the given order. """
+        if getattr(OPTS, "use_rust_router", False) and self.pin_type != "ring":
+            from .rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from .rust_route import supply_route
+                return supply_route(self, vdd_name, gnd_name)
         debug.info(1, "Running router for {} and {}...".format(vdd_name, gnd_name))
 
         # Save pin names

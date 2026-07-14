@@ -28,6 +28,11 @@ class signal_escape_router(router):
 
     def route(self, pin_names):
         """ Route the given pins to the perimeter. """
+        if getattr(OPTS, "use_rust_router", False):
+            from .rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from .rust_route import escape_route
+                return escape_route(self, pin_names)
         debug.info(1, "Running signal escape router...")
 
         # Prepare gdsMill to find pins and blockages
