@@ -4,6 +4,7 @@
 # All rights reserved.
 #
 import heapq
+from bisect import bisect_left
 from copy import deepcopy
 from openram import debug
 from openram.base.vector import vector
@@ -406,18 +407,52 @@ class graph:
         target_values = [(node.center.x, node.center.y, node.center.z)
                          for node in target_nodes]
         distances = {}
+        target_set = set(target_values)
+        x_values = sorted({x for x, _y, _z in target_set})
+        y_values = sorted({y for _x, y, _z in target_set})
+        z_values = sorted({z for _x, _y, z in target_set})
+        is_cartesian = (bool(target_values) and
+                        len(target_set) ==
+                        len(x_values) * len(y_values) * len(z_values))
+
+        if len(target_set) == 1:
+            target_x, target_y, target_z = next(iter(target_set))
+
+            def distance_to_targets(center):
+                return (abs(target_x - center.x) +
+                        abs(target_y - center.y) +
+                        abs(target_z - center.z))
+
+        elif is_cartesian:
+            def nearest_axis_distance(value, values):
+                index = bisect_left(values, value)
+                if index == 0:
+                    return abs(values[0] - value)
+                if index == len(values):
+                    return abs(values[-1] - value)
+                return min(abs(values[index - 1] - value),
+                           abs(values[index] - value))
+
+            def distance_to_targets(center):
+                return (nearest_axis_distance(center.x, x_values) +
+                        nearest_axis_distance(center.y, y_values) +
+                        nearest_axis_distance(center.z, z_values))
+
+        else:
+            def distance_to_targets(center):
+                min_dist = float("inf")
+                for x, y, z in target_values:
+                    dist = (abs(x - center.x) + abs(y - center.y) +
+                            abs(z - center.z))
+                    if dist < min_dist:
+                        min_dist = dist
+                return min_dist
 
         def h(node):
             cached = distances.get(node.id)
             if cached is not None:
                 return cached
-            center = node.center
-            min_dist = float("inf")
-            for x, y, z in target_values:
-                dist = (abs(x - center.x) + abs(y - center.y) +
-                        abs(z - center.z))
-                if dist < min_dist:
-                    min_dist = dist
+            min_dist = distance_to_targets(node.center)
             distances[node.id] = min_dist
             return min_dist
 

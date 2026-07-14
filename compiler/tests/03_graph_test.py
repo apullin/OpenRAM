@@ -99,6 +99,33 @@ class graph_test(openram_test):
             )
             self.assertEqual(heuristic(query), expected_distance)
             self.assertEqual(heuristic(query), expected_distance)
+
+        product_targets = [
+            graph_node((x, y, z))
+            for x in (-3.5, 2.0)
+            for y in (-1.25, 4.0, 9.5)
+            for z in (0, 1)
+        ]
+        product_targets.append(product_targets[0])
+        product_heuristic = graph._make_heuristic(product_targets)
+        for query in [graph_node((-5, 2, 0)),
+                      graph_node((-3.5, -1.25, 0)),
+                      graph_node((0.5, 6.5, 1)),
+                      graph_node((8, -8, 1))]:
+            expected_distance = min(
+                abs(target.center.x - query.center.x) +
+                abs(target.center.y - query.center.y) +
+                abs(target.center.z - query.center.z)
+                for target in product_targets
+            )
+            self.assertEqual(product_heuristic(query), expected_distance)
+            self.assertEqual(product_heuristic(query), expected_distance)
+
+        singleton = graph_node((-2.5, 4, 1))
+        singleton_heuristic = graph._make_heuristic([singleton, singleton])
+        singleton_query = graph_node((3.5, -1, 0))
+        self.assertEqual(singleton_heuristic(singleton_query), 12.0)
+
         self.assertEqual(graph._make_heuristic([])(graph_node((0, 0, 0))),
                          float("inf"))
 
