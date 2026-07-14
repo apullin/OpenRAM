@@ -27,9 +27,16 @@ import openram
 
 (OPTS, args) = openram.parse_args()
 
-# Check that we are left with a single configuration file as argument.
-if len(args) != 1:
+# One or more configuration files: several configs run sequentially in
+# this one process, which amortizes interpreter/container startup over
+# the whole batch (e.g. design-space sweeps).
+if len(args) < 1:
     print(openram.USAGE)
+    sys.exit(2)
+if len(args) > 1 and (OPTS.output_name != "" or OPTS.output_path != "."):
+    # Name/path flags would make every config write to the same place.
+    print("-o/-p apply to a single config; batched configs must set "
+          "output_name/output_path themselves.")
     sys.exit(2)
 
 # Set top process to openram
@@ -38,43 +45,45 @@ OPTS.top_process = 'openram'
 # These depend on arguments, so don't load them until now.
 from openram import debug
 
-# Parse config file and set up all the options
-openram.init_openram(config_file=args[0])
+for config_file in args:
+    # Parse config file and set up all the options
+    openram.init_openram(config_file=config_file)
 
-# Ensure that the right bitcell exists or use the parameterised one
-openram.setup_bitcell()
+    # Only print banner here so it's not in unit tests
+    if config_file is args[0]:
+        openram.print_banner()
 
-# Only print banner here so it's not in unit tests
-openram.print_banner()
+    # Ensure that the right bitcell exists or use the parameterised one
+    openram.setup_bitcell()
 
-# Keep track of running stats
-start_time = datetime.datetime.now()
-openram.print_time("Start", start_time)
+    # Keep track of running stats
+    start_time = datetime.datetime.now()
+    openram.print_time("Start", start_time)
 
-# Output info about this run
-openram.report_status()
+    # Output info about this run
+    openram.report_status()
 
-debug.print_raw("Words per row: {}".format(OPTS.words_per_row))
+    debug.print_raw("Words per row: {}".format(OPTS.words_per_row))
 
-output_extensions = ["lvs", "sp", "v", "lib", "py", "html", "log"]
-# Only output lef/gds if back-end
-if not OPTS.netlist_only:
-    output_extensions.extend(["lef", "gds"])
+    output_extensions = ["lvs", "sp", "v", "lib", "py", "html", "log"]
+    # Only output lef/gds if back-end
+    if not OPTS.netlist_only:
+        output_extensions.extend(["lef", "gds"])
 
-output_files = ["{0}{1}.{2}".format(OPTS.output_path,
-                                    OPTS.output_name, x)
-                for x in output_extensions]
-debug.print_raw("Output files are: ")
-for path in output_files:
-    debug.print_raw(path)
+    output_files = ["{0}{1}.{2}".format(OPTS.output_path,
+                                        OPTS.output_name, x)
+                    for x in output_extensions]
+    debug.print_raw("Output files are: ")
+    for path in output_files:
+        debug.print_raw(path)
 
-# Create an SRAM (we can also pass sram_config, see documentation/tutorials for details)
-from openram import sram
-s = sram()
+    # Create an SRAM (we can also pass sram_config, see documentation/tutorials for details)
+    from openram import sram
+    s = sram()
 
-# Output the files for the resulting SRAM
-s.save()
+    # Output the files for the resulting SRAM
+    s.save()
 
-# Delete temp files etc.
-openram.end_openram()
-openram.print_time("End", datetime.datetime.now(), start_time)
+    # Delete temp files etc.
+    openram.end_openram()
+    openram.print_time("End", datetime.datetime.now(), start_time)
