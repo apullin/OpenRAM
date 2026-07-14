@@ -192,33 +192,22 @@ class pin_layout:
         return pin_layout("", [vector(min_x, min_y), vector(max_x, max_y)], self.layer)
 
     def xoverlaps(self, other):
-        """ Check if shape has x overlap """
+        """ Check if shape has x overlap. """
         (ll, ur) = self.rect
         (oll, our) = other.rect
-        x_overlaps = False
-        # check if self is within other x range
-        if (ll.x >= oll.x and ll.x <= our.x) or (ur.x >= oll.x and ur.x <= our.x):
-            x_overlaps = True
-        # check if other is within self x range
-        if (oll.x >= ll.x and oll.x <= ur.x) or (our.x >= ll.x and our.x <= ur.x):
-            x_overlaps = True
-
-        return x_overlaps
+        return ((oll.x <= ll.x <= our.x) or
+                (oll.x <= ur.x <= our.x) or
+                (ll.x <= oll.x <= ur.x) or
+                (ll.x <= our.x <= ur.x))
 
     def yoverlaps(self, other):
-        """ Check if shape has x overlap """
+        """ Check if shape has y overlap. """
         (ll, ur) = self.rect
         (oll, our) = other.rect
-        y_overlaps = False
-
-        # check if self is within other y range
-        if (ll.y >= oll.y and ll.y <= our.y) or (ur.y >= oll.y and ur.y <= our.y):
-            y_overlaps = True
-        # check if other is within self y range
-        if (oll.y >= ll.y and oll.y <= ur.y) or (our.y >= ll.y and our.y <= ur.y):
-            y_overlaps = True
-
-        return y_overlaps
+        return ((oll.y <= ll.y <= our.y) or
+                (oll.y <= ur.y <= our.y) or
+                (ll.y <= oll.y <= ur.y) or
+                (ll.y <= our.y <= ur.y))
 
     def xcontains(self, other):
         """ Check if shape contains the x overlap """
@@ -265,10 +254,18 @@ class pin_layout:
         if not self.same_lpp(self.lpp, other.lpp):
             return False
 
-        x_overlaps = self.xoverlaps(other)
-        y_overlaps = self.yoverlaps(other)
-
-        return x_overlaps and y_overlaps
+        (ll, ur) = self.rect
+        (oll, our) = other.rect
+        x_overlaps = ((oll.x <= ll.x <= our.x) or
+                      (oll.x <= ur.x <= our.x) or
+                      (ll.x <= oll.x <= ur.x) or
+                      (ll.x <= our.x <= ur.x))
+        if not x_overlaps:
+            return False
+        return ((oll.y <= ll.y <= our.y) or
+                (oll.y <= ur.y <= our.y) or
+                (ll.y <= oll.y <= ur.y) or
+                (ll.y <= our.y <= ur.y))
 
     def area(self):
         """ Return the area. """
@@ -646,9 +643,10 @@ class pin_layout:
     def same_lpp(self, lpp1, lpp2):
         """
         Check if the layers and purposes are the same.
-        Ignore if purpose is a None.
+        Ignore if purpose is None.
         """
-        if lpp1[1] == None or lpp2[1] == None:
+        if lpp1 is lpp2:
+            return True
+        if lpp1[1] is None or lpp2[1] is None:
             return lpp1[0] == lpp2[0]
-
         return lpp1[0] == lpp2[0] and lpp1[1] == lpp2[1]

@@ -103,6 +103,27 @@ class graph_test(openram_test):
         self.assertFalse(inside.contains(container))
         self.assertFalse(container.contains(other_layer))
 
+        overlapping = shape("overlapping", (3, 3), (5, 5))
+        touching = shape("touching", (4, 1), (5, 2))
+        x_disjoint = shape("x_disjoint", (5, 1), (6, 2))
+        y_disjoint = shape("y_disjoint", (1, 5), (2, 6))
+        self.assertTrue(equivalent.overlaps(overlapping))
+        self.assertTrue(equivalent.overlaps(touching))
+        self.assertFalse(equivalent.overlaps(x_disjoint))
+        self.assertFalse(equivalent.overlaps(y_disjoint))
+
+        class inline_overlap_shape(graph_shape):
+            def xoverlaps(self, _other):
+                raise AssertionError("overlaps must inline the hot axis checks")
+
+            def yoverlaps(self, _other):
+                raise AssertionError("overlaps must inline the hot axis checks")
+
+        inline_overlap = inline_overlap_shape("inline_overlap",
+                                              [vector(0, 0), vector(1, 1)],
+                                              "m1")
+        self.assertTrue(inline_overlap.overlaps(equivalent))
+
         left_bbox = router_bbox(shape("left_bbox", (0, 0), (2, 2)))
         right_bbox = router_bbox(shape("right_bbox", (4, 0), (6, 2)))
         root = bbox_node(left_bbox.merge(right_bbox),
