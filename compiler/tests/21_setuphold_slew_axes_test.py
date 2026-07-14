@@ -101,6 +101,62 @@ class setup_hold_slew_axes_test(openram_test):
             self.assertEqual(len(set(rows)), len(related_slews),
                              "{} duplicated related-slew rows".format(name))
 
+    def _run_threshold_search(self, threshold_scale):
+        """Run a deterministic setup search and return its target trace."""
+        target_times = []
+        failure_threshold = threshold_scale * self.sh.period
+
+        def remember_target(sh, mode, target_time, correct_value):
+            target_times.append(target_time)
+
+        class fake_stimuli:
+            @staticmethod
+            def run_sim(stimulus):
+                pass
+
+        def result_for_target(filename, key):
+            # The reference point and targets before the threshold pass. A
+            # target at or after the threshold fails the clk-to-Q criterion.
+            return 1.0 if target_times[-1] < failure_threshold else 2.0
+
+        self.sh.write_stimulus = types.MethodType(remember_target, self.sh)
+        self.sh.stim = fake_stimuli()
+        self.sh.stim_sp = "unused.sp"
+        setup_hold_module = sys.modules[type(self.sh).__module__]
+        original_parse_spice_list = setup_hold_module.parse_spice_list
+        setup_hold_module.parse_spice_list = result_for_target
+        try:
+            result = self.sh.bidir_search(correct_value=1, mode="SETUP")
+        finally:
+            setup_hold_module.parse_spice_list = original_parse_spice_list
+
+        return result, target_times[1:], failure_threshold
+
+    def test_bidir_search_returns_last_pass_after_final_fail(self):
+        """A failing convergence midpoint must not replace the last pass."""
+        result, search_targets, failure_threshold = self._run_threshold_search(1.8)
+
+        self.assertGreaterEqual(search_targets[-1], failure_threshold,
+                                "test must converge on a failing midpoint")
+        last_passing_target = [target for target in search_targets
+                               if target < failure_threshold][-1]
+        expected = 2 * self.sh.period - last_passing_target
+        final_failing_value = 2 * self.sh.period - search_targets[-1]
+        self.assertNotEqual(expected, final_failing_value)
+        self.assertAlmostEqual(result, expected, places=12)
+
+    def test_bidir_search_returns_final_pass(self):
+        """A passing convergence midpoint remains the feasible result."""
+        result, search_targets, failure_threshold = self._run_threshold_search(1.8006)
+
+        self.assertLess(search_targets[-1], failure_threshold,
+                        "test must converge on a passing midpoint")
+        self.assertTrue(any(target >= failure_threshold
+                            for target in search_targets[:-1]),
+                        "test must establish an infeasible bound")
+        expected = 2 * self.sh.period - search_targets[-1]
+        self.assertAlmostEqual(result, expected, places=12)
+
 
 if __name__ == "__main__":
     (OPTS, args) = openram.parse_args()

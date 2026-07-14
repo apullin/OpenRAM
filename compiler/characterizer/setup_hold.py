@@ -221,17 +221,19 @@ class setup_hold():
             clk_to_q = convert_to_float(parse_spice_list("timing", "clk2q_delay"))
             # We use a 1/2 speed clock for some reason...
             setuphold_time = (target_time - 2 * self.period)
-            if mode == "SETUP": # SETUP is clk-din, not din-clk
-                passing_setuphold_time = -1 * setuphold_time
-            else:
-                passing_setuphold_time = setuphold_time
             if type(clk_to_q) == float and (clk_to_q < 1.1 * ideal_clk_to_q):
                 debug.info(2, "PASS Clk-to-Q: {0} Setup/Hold: {1}".format(clk_to_q, setuphold_time))
+                if mode == "SETUP": # SETUP is clk-din, not din-clk
+                    passing_setuphold_time = -1 * setuphold_time
+                else:
+                    passing_setuphold_time = setuphold_time
                 feasible_bound = target_time
             else:
                 debug.info(2, "FAIL Clk-to-Q: {0} Setup/Hold: {1}".format(clk_to_q, setuphold_time))
                 infeasible_bound = target_time
 
+            # Preserve the existing convergence resolution while returning the
+            # last passing candidate, even when the final midpoint fails.
             if relative_compare(feasible_bound, infeasible_bound, error_tolerance=0.001):
                 debug.info(3, "CONVERGE {0} vs {1}".format(feasible_bound, infeasible_bound))
                 break
