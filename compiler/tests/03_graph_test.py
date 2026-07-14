@@ -86,6 +86,23 @@ class graph_test(openram_test):
         self.assertNotIn(removed, left.neighbors)
         self.assertNotIn(removed, right.neighbors)
 
+        heuristic_targets = [graph_node((-1, 4, 0)),
+                             graph_node((5, -2, 1))]
+        heuristic = graph._make_heuristic(heuristic_targets)
+        for query in [graph_node((1, 1, 1)),
+                      graph_node((-1, 4, 0)),
+                      graph_node((8, 8, 0))]:
+            expected_distance = min(
+                target.center.distance(query.center) +
+                abs(target.center.z - query.center.z)
+                for target in heuristic_targets
+            )
+            self.assertEqual(heuristic(query), expected_distance)
+            self.assertEqual(heuristic(query), expected_distance)
+        self.assertEqual(graph._make_heuristic([])(graph_node((0, 0, 0))),
+                         float("inf"))
+
+
         via_nodes = [graph_node((0, 0, 0)), graph_node((0, 0, 1))]
         route_graph.graph_vias = []
         with patch.object(route_graph, "is_node_blocked",

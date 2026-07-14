@@ -394,21 +394,38 @@ class graph:
                 self.target_nodes.append(node)
 
 
+    @staticmethod
+    def _make_heuristic(target_nodes):
+        """ Return a cached Manhattan-distance heuristic. """
+
+        target_values = [(node.center.x, node.center.y, node.center.z)
+                         for node in target_nodes]
+        distances = {}
+
+        def h(node):
+            cached = distances.get(node.id)
+            if cached is not None:
+                return cached
+            center = node.center
+            min_dist = float("inf")
+            for x, y, z in target_values:
+                dist = (abs(x - center.x) + abs(y - center.y) +
+                        abs(z - center.z))
+                if dist < min_dist:
+                    min_dist = dist
+            distances[node.id] = min_dist
+            return min_dist
+
+        return h
+
+
     def find_shortest_path(self):
         """
         Find the shortest path from the source node to target node using the
         A* algorithm.
         """
 
-        # Heuristic function to calculate the scores
-        def h(node):
-            """ Return the estimated distance to the closest target. """
-            min_dist = float("inf")
-            for t in self.target_nodes:
-                dist = t.center.distance(node.center) + abs(t.center.z - node.center.z)
-                if dist < min_dist:
-                    min_dist = dist
-            return min_dist
+        h = self._make_heuristic(self.target_nodes)
 
         # Initialize data structures to be used for A* search
         queue = []
