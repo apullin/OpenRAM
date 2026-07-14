@@ -34,15 +34,31 @@ pub struct Text {
     pub purpose: i16,
     pub xy: (f64, f64),
     pub string: String,
+    /// STRANS mirror bit; None = record absent (gdsMill "").
+    pub strans: Option<bool>,
+    pub mag: Option<f64>,
+    pub angle: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Sref {
     pub sname: String,
     pub xy: (f64, f64),
-    /// STRANS reflect-about-X flag (bit 15)
-    pub mirror_x: bool,
-    pub angle: f64,
+    /// STRANS mirror bit; None = record absent (gdsMill "").
+    pub strans: Option<bool>,
+    pub mag: Option<f64>,
+    /// ANGLE record; None = absent. Flatten treats None as 0 degrees.
+    pub angle: Option<f64>,
+}
+
+impl Sref {
+    pub fn mirror_x(&self) -> bool {
+        self.strans.unwrap_or(false)
+    }
+
+    pub fn angle_deg(&self) -> f64 {
+        self.angle.unwrap_or(0.0)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -59,6 +75,8 @@ pub struct Layout {
     pub index: std::collections::HashMap<String, usize>,
     /// user units per database unit (GDS UNITS record, first value)
     pub user_unit: f64,
+    /// meters per database unit (GDS UNITS record, second value)
+    pub meter_unit: f64,
     pub root: Option<usize>,
     /// Layer numbers in first-seen order (gdsMill layerNumbersInUse).
     pub layers_in_use: Vec<i16>,
@@ -79,6 +97,7 @@ const ENDEL: u8 = 0x11;
 const SNAME: u8 = 0x12;
 const STRING: u8 = 0x19;
 const STRANS: u8 = 0x1A;
+const MAG: u8 = 0x1B;
 const ANGLE: u8 = 0x1C;
 const TEXTTYPE: u8 = 0x16;
 const UNITS: u8 = 0x03;
@@ -106,6 +125,7 @@ impl Layout {
     pub fn parse(data: &[u8]) -> Result<Layout, String> {
         let mut layout = Layout {
             user_unit: 0.001,
+            meter_unit: 1e-9,
             ..Default::default()
         };
         let mut cur: Option<Structure> = None;
@@ -116,8 +136,9 @@ impl Layout {
         let mut el_xy: Vec<(f64, f64)> = Vec::new();
         let mut el_sname = String::new();
         let mut el_string = String::new();
-        let mut el_mirror = false;
-        let mut el_angle = 0.0f64;
+        let mut el_strans: Option<bool> = None;
+        let mut el_mag: Option<f64> = None;
+        let mut el_angle: Option<f64> = None;
 
         let mut i = 0usize;
         let n = data.len();
@@ -132,6 +153,9 @@ impl Layout {
                 UNITS => {
                     if p.len() >= 8 {
                         layout.user_unit = gds_real(&p[0..8]);
+                    }
+                    if p.len() >= 16 {
+                        layout.meter_unit = gds_real(&p[8..16]);
                     }
                 }
                 BGNSTR => {
@@ -157,8 +181,9 @@ impl Layout {
                     el_xy.clear();
                     el_sname.clear();
                     el_string.clear();
-                    el_mirror = false;
-                    el_angle = 0.0;
+                    el_strans = None;
+                    el_mag = None;
+                    el_angle = None;
                 }
                 LAYER => {
                     el_layer = be_i16(p);
@@ -187,10 +212,15 @@ impl Layout {
                         .trim_end_matches('\0')
                         .to_string();
                 }
-                STRANS => el_mirror = p.len() >= 2 && (p[0] & 0x80) != 0,
+                STRANS => el_strans = Some(p.len() >= 2 && (p[0] & 0x80) != 0),
+                MAG => {
+                    if p.len() >= 8 {
+                        el_mag = Some(gds_real(&p[0..8]));
+                    }
+                }
                 ANGLE => {
                     if p.len() >= 8 {
-                        el_angle = gds_real(&p[0..8]);
+                        el_angle = Some(gds_real(&p[0..8]));
                     }
                 }
                 ENDEL => {
@@ -212,6 +242,9 @@ impl Layout {
                                         purpose: el_purpose,
                                         xy: el_xy[0],
                                         string: el_string.clone(),
+                                        strans: el_strans,
+                                        mag: el_mag,
+                                        angle: el_angle,
                                     });
                                 }
                             }
@@ -220,7 +253,8 @@ impl Layout {
                                     s.srefs.push(Sref {
                                         sname: el_sname.clone(),
                                         xy: el_xy[0],
-                                        mirror_x: el_mirror,
+                                        strans: el_strans,
+                                        mag: el_mag,
                                         angle: el_angle,
                                     });
                                 }
@@ -321,8 +355,8 @@ impl Layout {
             // Child-local transform: rotate by angle, mirror-X scale,
             // translate by xy. Composed with the parent transform the same
             // way the reversed matrix products in addToXyTree resolve.
-            let (c, s) = rot_cos_sin(sref.angle);
-            let sy = if sref.mirror_x { -1.0 } else { 1.0 };
+            let (c, s) = rot_cos_sin(sref.angle_deg());
+            let sy = if sref.mirror_x() { -1.0 } else { 1.0 };
             // local u/v after rotate+scale (column vectors of R then S)
             let lu = (c, sy * s);
             let lv = (-s, sy * c);
@@ -462,9 +496,10 @@ impl Layout {
 }
 
 impl Layout {
-    pub fn new_empty(user_unit: f64) -> Layout {
+    pub fn new_empty(user_unit: f64, meter_unit: f64) -> Layout {
         Layout {
             user_unit,
+            meter_unit,
             ..Default::default()
         }
     }

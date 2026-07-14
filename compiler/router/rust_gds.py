@@ -55,8 +55,13 @@ class _export_collector:
         o = (self.userUnits(offsetInMicrons[0]),
              self.userUnits(offsetInMicrons[1]))
         purpose = purposeNumber if isinstance(purposeNumber, int) else 0
+        # GdsText defaults transFlags to [0,0,0] (STRANS always written);
+        # magFactor/rotateAngle only when set (addText semantics).
+        mag = float(magnification) if magnification else None
+        angle = float(rotate) if rotate else None
         self.texts.append((str(text), layerNumber, purpose,
-                           float(o[0]), float(o[1])))
+                           float(o[0]), float(o[1]),
+                           False, mag, angle))
 
     def addInstance(self, layoutToAdd, nameOfLayout=0, offsetInMicrons=(0, 0),
                     mirror=None, rotate=None):
@@ -68,9 +73,11 @@ class _export_collector:
             name = str(nameOfLayout)
         if name.endswith("\x00"):
             name = name.rstrip("\x00")
-        # Same mirror/rotate resolution as vlsiLayout.addInstance
+        # Same mirror/rotate resolution as vlsiLayout.addInstance.
+        # GdsSref defaults transFlags to [0,0,0], so STRANS is always
+        # present; rotateAngle is set (ANGLE record) only when assigned.
         mirror_x = False
-        angle = 0.0
+        angle = None
         if mirror or rotate:
             if mirror == "R90":
                 rotate = 90.0
@@ -87,7 +94,8 @@ class _export_collector:
                 angle = 180.0
             if mirror == "xy" or mirror == "XY":
                 angle = 180.0
-        self.srefs.append((name, float(o[0]), float(o[1]), mirror_x, angle))
+        self.srefs.append((name, float(o[0]), float(o[1]),
+                           mirror_x, None, angle))
 
     def addPath(self, *args, **kwargs):
         raise NotImplementedError(
@@ -137,7 +145,7 @@ def export_design(design):
     layout = design.gds
     rl = getattr(design, "_rust_gds_layout", None)
     if rl is None:
-        rl = rs.GdsLayout.empty(layout.units[0])
+        rl = rs.GdsLayout.empty(layout.units[0], layout.units[1])
         design._rust_gds_layout = rl
 
     root = str(layout.rootStructureName)
@@ -171,22 +179,30 @@ def _export_structures(layout, rl, replace_root):
             child = str(sref.sName)
             if child.endswith("\x00"):
                 child = child.rstrip("\x00")
-            angle = sref.rotateAngle
-            angle = 0.0 if angle in ("", None) else float(angle)
+            strans = (None if sref.transFlags == ""
+                      else bool(sref.transFlags[0]))
+            mag = None if sref.magFactor in ("", None) else float(sref.magFactor)
+            angle = (None if sref.rotateAngle in ("", None)
+                     else float(sref.rotateAngle))
             srefs.append((child,
                           float(sref.coordinates[0]),
                           float(sref.coordinates[1]),
-                          bool(sref.transFlags[0]),
-                          angle))
+                          strans, mag, angle))
         texts = []
         for t in s.texts:
             string = str(t.textString)
             if string.endswith("\x00"):
                 string = string.rstrip("\x00")
             purpose = t.purposeLayer if isinstance(t.purposeLayer, int) else 0
+            strans = (None if t.transFlags == ""
+                      else bool(t.transFlags[0]))
+            mag = None if t.magFactor in ("", None) else float(t.magFactor)
+            angle = (None if t.rotateAngle in ("", None)
+                     else float(t.rotateAngle))
             texts.append((string, t.drawingLayer, purpose,
                           float(t.coordinates[0][0]),
-                          float(t.coordinates[0][1])))
+                          float(t.coordinates[0][1]),
+                          strans, mag, angle))
         rl.add_structure(sname, boundaries, srefs, texts)
 
 
