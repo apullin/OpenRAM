@@ -22,7 +22,7 @@ class port_data(design):
     """
 
     def __init__(self, sram_config, port, has_rbl, num_spare_cols=None,
-                 num_filler_cols=0, bit_offsets=None, name="",):
+                 bit_offsets=None, name="", num_filler_cols=0):
 
         sram_config.set_local_config(self)
         self.port = port
@@ -36,19 +36,37 @@ class port_data(design):
                 self.num_spare_cols = num_spare_cols + self.num_spare_cols
         if self.num_spare_cols is None:
             self.num_spare_cols = 0
+        debug.check(isinstance(num_filler_cols, int) and num_filler_cols >= 0,
+                    "num_filler_cols must be a non-negative integer.")
         self.num_filler_cols = num_filler_cols
-        if not bit_offsets:
+
+        expected_data_offsets = self.num_cols
+        expected_datapath_offsets = self.num_cols + self.num_spare_cols
+        expected_physical_offsets = expected_datapath_offsets + self.num_filler_cols
+        if bit_offsets is None or len(bit_offsets) == 0:
             bitcell = factory.create(module_type=OPTS.bitcell)
             if(cell_properties.use_strap == True and OPTS.num_ports == 1):
                 strap = factory.create(module_type=cell_properties.strap_module, version=cell_properties.strap_version)
                 precharge_width = bitcell.width + strap.width
             else:
                 precharge_width = bitcell.width
-            self.bit_offsets = []
-            for i in range(self.num_cols + self.num_spare_cols + self.num_filler_cols):
-                self.bit_offsets.append(i * precharge_width)
+            self.physical_bit_offsets = [i * precharge_width
+                                         for i in range(expected_physical_offsets)]
         else:
-            self.bit_offsets = bit_offsets
+            self.physical_bit_offsets = list(bit_offsets)
+        debug.check(len(self.physical_bit_offsets) == expected_physical_offsets,
+                    "Expected {} physical bit offsets, received {}.".format(
+                        expected_physical_offsets, len(self.physical_bit_offsets)))
+
+        # Filler columns are physical/precharge resources, not datapath lanes.
+        self.data_bit_offsets = self.physical_bit_offsets[:expected_data_offsets]
+        self.datapath_bit_offsets = self.physical_bit_offsets[:expected_datapath_offsets]
+        debug.check(len(self.data_bit_offsets) == expected_data_offsets,
+                    "Incorrect data-column offset count.")
+        debug.check(len(self.datapath_bit_offsets) == expected_datapath_offsets,
+                    "Incorrect visible datapath offset count.")
+        # Retain the historical attribute as the full physical offset list.
+        self.bit_offsets = self.physical_bit_offsets
         if name == "":
             name = "port_data_{0}".format(self.port)
         super().__init__(name)
@@ -212,12 +230,12 @@ class port_data(design):
         if self.has_rbl:
             if self.port == 0:
                 # Append an offset on the left
-                precharge_bit_offsets = [self.bit_offsets[0] - precharge_width] + self.bit_offsets
+                precharge_bit_offsets = [self.physical_bit_offsets[0] - precharge_width] + self.physical_bit_offsets
             else:
                 # Append an offset on the right
-                precharge_bit_offsets = self.bit_offsets + [self.bit_offsets[-1] + precharge_width]
+                precharge_bit_offsets = self.physical_bit_offsets + [self.physical_bit_offsets[-1] + precharge_width]
         else:
-            precharge_bit_offsets = self.bit_offsets
+            precharge_bit_offsets = self.physical_bit_offsets
 
         # has_rbl is a boolean treated as 1 if true 0 if false typical python
         self.precharge_array = factory.create(module_type="precharge_array",
@@ -232,7 +250,7 @@ class port_data(design):
             # RBLs don't get a sense amp
             self.sense_amp_array = factory.create(module_type="sense_amp_array",
                                                   word_size=self.word_size,
-                                                  offsets=self.bit_offsets,
+                                                  offsets=self.datapath_bit_offsets,
                                                   words_per_row=self.words_per_row,
                                                   num_spare_cols=self.num_spare_cols)
         else:
@@ -243,7 +261,7 @@ class port_data(design):
             self.column_mux_array = factory.create(module_type="column_mux_array",
                                                    columns=self.num_cols,
                                                    word_size=self.word_size,
-                                                   offsets=self.bit_offsets,
+                                                   offsets=self.data_bit_offsets,
                                                    bitcell_bl=self.bl_names[self.port],
                                                    bitcell_br=self.br_names[self.port])
         else:
@@ -254,14 +272,14 @@ class port_data(design):
             self.write_driver_array = factory.create(module_type="write_driver_array",
                                                      columns=self.num_cols,
                                                      word_size=self.word_size,
-                                                     offsets=self.bit_offsets,
+                                                     offsets=self.datapath_bit_offsets,
                                                      write_size=self.write_size,
                                                      num_spare_cols=self.num_spare_cols)
             if self.write_size != self.word_size:
                 # RBLs don't get a write mask
                 self.write_mask_and_array = factory.create(module_type="write_mask_and_array",
                                                            columns=self.num_cols,
-                                                           offsets=self.bit_offsets,
+                                                           offsets=self.data_bit_offsets,
                                                            word_size=self.word_size,
                                                            write_size=self.write_size)
             else:
@@ -734,8 +752,9 @@ class port_data(design):
             else:
                 debug.error("Didn't find precharge array.")
 
-        # Filler columns are deliberately precharge-only.  Equal BL/BR levels
-        # make them electrically inert when a regular wordline is selected.
+        # Filler columns have no sense or write datapath. Their ordinary 6T
+        # cells still perform a data-dependent read/discharge when a regular
+        # wordline is selected; the shared precharge control restores BL/BR.
         for bit in range(self.num_filler_cols):
             if self.precharge_array_inst:
                 precharge_bit = self.num_cols + self.num_spare_cols + bit + bit_offset

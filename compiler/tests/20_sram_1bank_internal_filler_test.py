@@ -96,6 +96,21 @@ class sram_1bank_internal_filler_test(openram_test):
         self.assertIn("parameter DATA_WIDTH = 9 ;", repair_verilog)
         self.assertIn("spare_wen0", repair_verilog)
 
+        # A global/local hierarchy needs each local array legalized separately;
+        # reject the unsupported combination instead of creating bad tiling.
+        factory.reset()
+        OPTS.local_array_size = 16
+        local_config = sram_config(word_size=8,
+                                   num_words=64,
+                                   num_banks=1,
+                                   words_per_row=4)
+        try:
+            with self.assertRaises(AssertionError):
+                sram(local_config, "sram_64x8_unsupported_local_filler")
+        finally:
+            OPTS.local_array_size = 0
+            factory.reset()
+
         openram.end_openram()
 
 

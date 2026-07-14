@@ -40,6 +40,9 @@ class write_driver_array(design):
             self.num_spare_cols = 0
         else:
             self.num_spare_cols = num_spare_cols
+        if self.offsets:
+            debug.check(len(self.offsets) == self.columns + self.num_spare_cols,
+                        "Write-driver offsets must contain only data and public spare columns.")
 
         if self.write_size != self.word_size:
             self.num_wmasks = int(math.ceil(self.word_size / self.write_size))

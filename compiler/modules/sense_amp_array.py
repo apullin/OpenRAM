@@ -34,6 +34,9 @@ class sense_amp_array(design):
             self.num_spare_cols = 0
         else:
             self.num_spare_cols = num_spare_cols
+        if self.offsets:
+            debug.check(len(self.offsets) == self.num_cols + self.num_spare_cols,
+                        "Sense-amp offsets must contain only data and public spare columns.")
 
         self.column_offset = column_offset
         self.row_size = self.word_size * self.words_per_row

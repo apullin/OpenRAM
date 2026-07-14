@@ -25,6 +25,9 @@ class precharge_array(design):
 
         self.columns = columns
         self.offsets = offsets
+        if self.offsets:
+            debug.check(len(self.offsets) == self.columns,
+                        "Precharge offset count must match physical column count.")
         self.size = size
         self.bitcell_bl = bitcell_bl
         self.bitcell_br = bitcell_br

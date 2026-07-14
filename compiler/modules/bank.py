@@ -382,6 +382,10 @@ class bank(design):
         array_cols = visible_cols + self.num_filler_cols
         debug.info(1, "Adding {} internal filler column(s)".format(self.num_filler_cols))
 
+        debug.check(not (OPTS.local_array_size > 0 and self.num_filler_cols > 0),
+                    "Internal filler columns with local_array_size > 0 require "
+                    "per-subarray legalization and are not supported yet.")
+
         local_array_size = OPTS.local_array_size
 
         if local_array_size > 0:
