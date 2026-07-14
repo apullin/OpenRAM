@@ -7,6 +7,7 @@
 
 pub mod bbox_tree;
 pub mod gds;
+pub mod gds_writer;
 pub mod graph;
 pub mod router_store;
 pub mod shape;

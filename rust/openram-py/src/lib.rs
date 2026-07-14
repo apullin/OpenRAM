@@ -200,22 +200,38 @@ impl GdsLayout {
 
     /// Empty layout for direct in-memory export from Python.
     #[staticmethod]
-    fn empty(user_unit: f64) -> GdsLayout {
+    fn empty(user_unit: f64, meter_unit: f64) -> GdsLayout {
         GdsLayout {
-            layout: openram_core::gds::Layout::new_empty(user_unit),
+            layout: openram_core::gds::Layout::new_empty(user_unit, meter_unit),
         }
+    }
+
+    /// Serialize to a GDSII file (gds2writer-compatible bytes).
+    /// dates: 12 shorts filling BGNLIB and every BGNSTR.
+    fn write_gds(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        dates: [i16; 12],
+        library_name: &str,
+        gds_version: i16,
+    ) -> PyResult<()> {
+        let bytes = py.detach(|| self.layout.write_gds(&dates, library_name, gds_version));
+        std::fs::write(path, bytes)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
     }
 
     /// Add or replace one structure.
     /// boundaries: (layer, purpose, [x0, y0, x1, y1, ...]) in DB units.
-    /// srefs: (child_name, x, y, mirror_x, angle_degrees).
-    /// texts: (string, layer, purpose, x, y).
+    /// srefs: (child_name, x, y, strans_mirror, mag, angle) where None
+    /// means the record is absent (gdsMill "").
+    /// texts: (string, layer, purpose, x, y, strans_mirror, mag, angle).
     fn add_structure(
         &mut self,
         name: &str,
         boundaries: Vec<(i16, i16, Vec<f64>)>,
-        srefs: Vec<(String, f64, f64, bool, f64)>,
-        texts: Vec<(String, i16, i16, f64, f64)>,
+        srefs: Vec<(String, f64, f64, Option<bool>, Option<f64>, Option<f64>)>,
+        texts: Vec<(String, i16, i16, f64, f64, Option<bool>, Option<f64>, Option<f64>)>,
     ) {
         let s = openram_core::gds::Structure {
             name: name.to_string(),
@@ -229,20 +245,26 @@ impl GdsLayout {
                 .collect(),
             srefs: srefs
                 .into_iter()
-                .map(|(sname, x, y, mirror_x, angle)| openram_core::gds::Sref {
+                .map(|(sname, x, y, strans, mag, angle)| openram_core::gds::Sref {
                     sname,
                     xy: (x, y),
-                    mirror_x,
+                    strans,
+                    mag,
                     angle,
                 })
                 .collect(),
             texts: texts
                 .into_iter()
-                .map(|(string, layer, purpose, x, y)| openram_core::gds::Text {
-                    layer,
-                    purpose,
-                    xy: (x, y),
-                    string,
+                .map(|(string, layer, purpose, x, y, strans, mag, angle)| {
+                    openram_core::gds::Text {
+                        layer,
+                        purpose,
+                        xy: (x, y),
+                        string,
+                        strans,
+                        mag,
+                        angle,
+                    }
                 })
                 .collect(),
         };

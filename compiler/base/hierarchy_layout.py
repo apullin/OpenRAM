@@ -1545,6 +1545,19 @@ class layout():
         """Write the entire gds of the object to the file."""
         debug.info(3, "Writing to {}".format(gds_name))
 
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.router.rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from openram.router.rust_gds import export_design
+                import datetime
+                rl = export_design(self)
+                now = datetime.datetime.now()
+                dates = [now.year, now.month, now.day,
+                         now.hour, now.minute, now.second] * 2
+                rl.write_gds(gds_name, dates, "DEFAULT.DB", 5)
+                debug.info(3, "Done writing to {}".format(gds_name))
+                return
+
         # If we already wrote a GDS, we need to reset and traverse it again in
         # case we made changes.
         if not self.is_library_cell and self.visited:
