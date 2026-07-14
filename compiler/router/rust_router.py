@@ -99,12 +99,15 @@ class rust_graph:
         core = shape.get_core()
         cll, cur = core.rect
         lpp = shape.lpp
+        purpose = -1 if lpp[1] is None else lpp[1]
         return ((ll.x, ll.y, ur.x, ur.y, cll.x, cll.y, cur.x, cur.y),
                 (self._name_id(shape.name),
                  self._lpp_id(lpp),
                  self.router.get_zindex(lpp),
                  self._same_lpp(lpp, self._route_lpps[0]),
-                 self._same_lpp(lpp, self._route_lpps[1])))
+                 self._same_lpp(lpp, self._route_lpps[1]),
+                 lpp[0],
+                 purpose))
 
     def create_graph(self, source, target):
         """ Stage the inputs; the Rust side runs both phases in route(). """

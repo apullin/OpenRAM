@@ -2,10 +2,11 @@ use openram_core::{RouteContext, ShapeIn, Tech};
 use pyo3::prelude::*;
 
 /// One shape crossing the boundary:
-/// ((llx, lly, urx, ury, cllx, clly, curx, cury), (name, lpp, zindex, same0, same1))
+/// ((llx, lly, urx, ury, cllx, clly, curx, cury),
+///  (name, lpp, zindex, same0, same1, layer_num, purpose))
 type PyShape = (
     (f64, f64, f64, f64, f64, f64, f64, f64),
-    (u32, u32, i8, bool, bool),
+    (u32, u32, i8, bool, bool, i16, i32),
 );
 
 fn to_shape(t: &PyShape) -> ShapeIn {
@@ -23,6 +24,8 @@ fn to_shape(t: &PyShape) -> ShapeIn {
         lpp: m.1,
         zindex: m.2,
         same_route_lpp: [m.3, m.4],
+        layer_num: m.5,
+        purpose: m.6,
     }
 }
 
@@ -78,6 +81,97 @@ impl Router {
         let ctx = &self.ctx;
         let (s, t) = (to_shape(&source), to_shape(&target));
         py.detach(|| ctx.route(s, t))
+    }
+}
+
+/// Rust-owned router state for one route() run: blockages, vias, pins,
+/// and the per-pair routing, with no per-pair reconversion.
+#[pyclass]
+struct RouterStore {
+    store: openram_core::router_store::RouterStore,
+}
+
+#[pymethods]
+impl RouterStore {
+    #[new]
+    fn new(
+        grid: f64,
+        ndigits: usize,
+        track_wire: f64,
+        track_space: f64,
+        half_wire: f64,
+        region_spacing: f64,
+    ) -> Self {
+        RouterStore {
+            store: openram_core::router_store::RouterStore::new(Tech {
+                grid,
+                ndigits,
+                track_wire,
+                track_space,
+                half_wire,
+                region_spacing,
+            }),
+        }
+    }
+
+    fn intern_name(&mut self, name: &str) -> u32 {
+        self.store.intern_name(name)
+    }
+
+    fn intern_lpp(&mut self, lpp: &str) -> u32 {
+        self.store.intern_lpp(lpp)
+    }
+
+    fn add_pin(&mut self, pin: PyShape) {
+        self.store.add_pin(to_shape(&pin));
+    }
+
+    fn append_blockage(&mut self, shape: PyShape) {
+        self.store.append_blockage(to_shape(&shape));
+    }
+
+    fn find_blockages_layer(&mut self, py: Python<'_>, layer_num: i16, shapes: Vec<PyShape>) {
+        let converted: Vec<_> = shapes.iter().map(to_shape).collect();
+        let store = &mut self.store;
+        py.detach(|| store.find_blockages_layer(layer_num, converted))
+    }
+
+    fn find_vias(&mut self, py: Python<'_>, shapes: Vec<(PyShape, PyShape)>) {
+        let converted: Vec<_> = shapes
+            .iter()
+            .map(|(raw, inflated)| (to_shape(raw), to_shape(inflated)))
+            .collect();
+        let store = &mut self.store;
+        py.detach(|| store.find_vias(converted))
+    }
+
+    fn convert_vias(&mut self, py: Python<'_>) {
+        let store = &mut self.store;
+        py.detach(|| store.convert_vias())
+    }
+
+    fn convert_blockages(&mut self, py: Python<'_>) {
+        let store = &mut self.store;
+        py.detach(|| store.convert_blockages())
+    }
+
+    fn route(
+        &self,
+        py: Python<'_>,
+        source: PyShape,
+        target: PyShape,
+    ) -> Option<Vec<(f64, f64, u8)>> {
+        let (s, t) = (to_shape(&source), to_shape(&target));
+        let store = &self.store;
+        py.detach(|| store.route(s, t))
+    }
+
+    fn blockage_len(&self) -> usize {
+        self.store.blockages.len()
+    }
+
+    fn via_len(&self) -> usize {
+        self.store.vias.len()
     }
 }
 
@@ -219,6 +313,7 @@ impl GdsLayout {
 #[pymodule]
 fn openram_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
+    m.add_class::<RouterStore>()?;
     m.add_class::<GdsLayout>()?;
     m.add_function(wrap_pyfunction!(snap, m)?)?;
     Ok(())

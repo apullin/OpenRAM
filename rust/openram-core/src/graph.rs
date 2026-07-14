@@ -33,8 +33,10 @@ pub struct RouteContext {
     pub vias: Vec<ShapeIn>,
 }
 
-struct Graph<'a> {
-    ctx: &'a RouteContext,
+pub(crate) struct Graph<'a> {
+    tech: Tech,
+    ctx_blockages: &'a [ShapeIn],
+    ctx_vias: &'a [ShapeIn],
     source: ShapeIn,
     target: ShapeIn,
     // Indices into a merged shape list: context blockages then appended pins.
@@ -56,22 +58,38 @@ impl RouteContext {
     /// graph.create_graph + find_shortest_path for one source/target pair.
     /// Returns the path node centers, or None if unroutable.
     pub fn route(&self, source: ShapeIn, target: ShapeIn) -> Option<Vec<(f64, f64, u8)>> {
-        let mut g = Graph::new(self, source, target);
-        g.create();
-        g.find_shortest_path()
+        route_over(self.tech, &self.blockages, &self.vias, source, target)
     }
 }
 
+/// Route one source/target pair over shared blockage/via slices.
+pub fn route_over(
+    tech: Tech,
+    blockages: &[ShapeIn],
+    vias: &[ShapeIn],
+    source: ShapeIn,
+    target: ShapeIn,
+) -> Option<Vec<(f64, f64, u8)>> {
+    let mut g = Graph::new(tech, blockages, vias, source, target);
+    g.create();
+    g.find_shortest_path()
+}
+
 impl<'a> Graph<'a> {
-    fn new(ctx: &'a RouteContext, source: ShapeIn, target: ShapeIn) -> Graph<'a> {
-        let wide = ctx.tech.track_wire;
-        let half_wide = ctx.tech.half_wire;
-        let spacing = py_round(
-            ctx.tech.track_space + half_wide + ctx.tech.grid,
-            ctx.tech.ndigits,
-        );
+    fn new(
+        tech: Tech,
+        ctx_blockages: &'a [ShapeIn],
+        ctx_vias: &'a [ShapeIn],
+        source: ShapeIn,
+        target: ShapeIn,
+    ) -> Graph<'a> {
+        let wide = tech.track_wire;
+        let half_wide = tech.half_wire;
+        let spacing = py_round(tech.track_space + half_wide + tech.grid, tech.ndigits);
         Graph {
-            ctx,
+            tech,
+            ctx_blockages,
+            ctx_vias,
             source,
             target,
             graph_blockages: Vec::new(),
@@ -90,7 +108,7 @@ impl<'a> Graph<'a> {
     }
 
     fn nd(&self) -> usize {
-        self.ctx.tech.ndigits
+        self.tech.ndigits
     }
 
     fn is_routable(&self, s: &ShapeIn) -> bool {
@@ -100,7 +118,7 @@ impl<'a> Graph<'a> {
     fn create(&mut self) {
         // Routing region: bbox of source+target cores, inflated and snapped
         // (graph_shape.inflated_pin constructs a snapped graph_shape).
-        let sp = self.ctx.tech.region_spacing;
+        let sp = self.tech.region_spacing;
         let nd = self.nd();
         let mut rllx = self.source.cllx.min(self.target.llx);
         let mut rlly = self.source.clly.min(self.target.lly);
@@ -111,7 +129,7 @@ impl<'a> Graph<'a> {
         rurx = py_round(rurx + sp, nd);
         rury = py_round(rury + sp, nd);
 
-        let mut included: Vec<bool> = vec![false; self.ctx.blockages.len()];
+        let mut included: Vec<bool> = vec![false; self.ctx_blockages.len()];
         let mut seen: HashSet<(u32, u32, [u64; 4])> = HashSet::new();
         self.find_graph_blockages(rllx, rlly, rurx, rury, &mut included, &mut seen, true);
         self.find_graph_vias(rllx, rlly, rurx, rury);
@@ -152,7 +170,7 @@ impl<'a> Graph<'a> {
         seen: &mut HashSet<(u32, u32, [u64; 4])>,
         ensure_pins: bool,
     ) {
-        for (i, b) in self.ctx.blockages.iter().enumerate() {
+        for (i, b) in self.ctx_blockages.iter().enumerate() {
             if included[i] || seen.contains(&Self::shape_key(b)) {
                 continue;
             }
@@ -188,7 +206,7 @@ impl<'a> Graph<'a> {
     }
 
     fn find_graph_vias(&mut self, rllx: f64, rlly: f64, rurx: f64, rury: f64) {
-        'outer: for v in &self.ctx.vias {
+        'outer: for v in self.ctx_vias {
             for existing in &self.graph_vias {
                 if existing.lpp == v.lpp
                     && existing.llx == v.llx
@@ -208,8 +226,8 @@ impl<'a> Graph<'a> {
     /// graph.get_safe_pin_values on a shape's core.
     fn safe_pin_values(&self, s: &ShapeIn) -> (Vec<f64>, Vec<f64>) {
         let nd = self.nd();
-        let offset = self.ctx.tech.half_wire;
-        let spacing = self.ctx.tech.track_space;
+        let offset = self.tech.half_wire;
+        let spacing = self.tech.track_space;
         let size_limit = py_round(offset * 4.0 + spacing, nd);
         let mut xs = Vec::with_capacity(2);
         let mut ys = Vec::with_capacity(2);
@@ -230,7 +248,7 @@ impl<'a> Graph<'a> {
 
     fn generate_cartesian_values(&self) -> (Vec<f64>, Vec<f64>) {
         let nd = self.nd();
-        let grid = self.ctx.tech.grid;
+        let grid = self.tech.grid;
         let mut xs: Vec<f64> = Vec::new();
         let mut ys: Vec<f64> = Vec::new();
         for s in &self.graph_blockages {
@@ -543,7 +561,7 @@ impl<'a> Graph<'a> {
         }
         if let Some(p) = prev {
             if Self::direction(a, p) != Self::direction(a, b) {
-                layer_dist += self.ctx.tech.grid;
+                layer_dist += self.tech.grid;
             }
         }
         let via_dist = (a.z as i32 - b.z as i32).abs() as f64 * 2.0;

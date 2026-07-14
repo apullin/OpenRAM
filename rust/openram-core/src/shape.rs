@@ -22,6 +22,20 @@ pub struct ShapeIn {
     pub zindex: i8,
     /// same_lpp(shape.lpp, route_lpp[z]) for z in 0, 1
     pub same_route_lpp: [bool; 2],
+    /// GDS layer number (lpp[0]); used by the router store's layer filters.
+    pub layer_num: i16,
+    /// GDS purpose (lpp[1]); -1 encodes Python None (same_lpp wildcard).
+    pub purpose: i32,
+}
+
+impl ShapeIn {
+    /// pin_layout.same_lpp: purpose None matches anything.
+    pub fn same_lpp_wild(&self, other: &ShapeIn) -> bool {
+        if self.purpose < 0 || other.purpose < 0 {
+            return self.layer_num == other.layer_num;
+        }
+        self.layer_num == other.layer_num && self.purpose == other.purpose
+    }
 }
 
 impl ShapeIn {
