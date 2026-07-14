@@ -722,17 +722,24 @@ class spice():
         """
         if self in exclusion_set:
             return False
+        # Lowercase once; the recursion re-lowers the same names millions
+        # of times on big arrays otherwise.
+        known_lower = known_net.lower()
+        alias_lower = net_alias.lower()
+        is_target_mod = (self == mod) and known_lower == alias_lower
         # Check ports of this mod
-        for pin in self.pins:
-            if self.is_net_alias_name_check(known_net, pin, net_alias, mod):
-                return True
+        if is_target_mod:
+            for pin in self.pins:
+                if pin.lower() == alias_lower:
+                    return True
         # Check connections of all other subinsts
         mod_set = set()
         for subinst, inst_conns in zip(self.insts, self.get_instance_connections()):
             for inst_conn, mod_pin in zip(inst_conns, subinst.mod.pins):
-                if self.is_net_alias_name_check(known_net, inst_conn, net_alias, mod):
+                conn_lower = inst_conn.lower()
+                if is_target_mod and conn_lower == alias_lower:
                     return True
-                elif inst_conn.lower() == known_net.lower() and subinst.mod not in mod_set:
+                elif conn_lower == known_lower and subinst.mod not in mod_set:
                     if subinst.mod.is_net_alias(mod_pin, net_alias, mod, exclusion_set):
                         return True
                     mod_set.add(subinst.mod)
