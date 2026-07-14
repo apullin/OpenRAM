@@ -12,19 +12,120 @@ list across labels when a layer_override hits — mirror vlsiLayout.py.
 from .rust_router import load_openram_rs
 
 
+class _export_collector:
+    """
+    Stand-in for VlsiLayout that records the top structure's elements as
+    export tuples. It receives the exact addBox/addText/addInstance calls
+    the per-object gds_write_file methods make, so element semantics and
+    ordering are inherited rather than replicated. Children are untouched
+    (their own visited lists keep them cached).
+    """
+
+    def __init__(self, units):
+        self.units = units
+        self.boundaries = []
+        self.texts = []
+        self.srefs = []
+
+    def userUnits(self, microns):
+        # Same computation as vlsiLayout.userUnits
+        layoutUnitsPerMicron = 1.0 / self.units[0]
+        return round(microns * layoutUnitsPerMicron, 0)
+
+    def addBox(self, layerNumber=0, purposeNumber=0, offsetInMicrons=(0, 0),
+               width=1.0, height=1.0, center=False):
+        o = (self.userUnits(offsetInMicrons[0]),
+             self.userUnits(offsetInMicrons[1]))
+        w = self.userUnits(width)
+        h = self.userUnits(height)
+        if not center:
+            start = o
+        else:
+            start = (o[0] - w / 2.0, o[1] - h / 2.0)
+        flat = [start[0], start[1],
+                start[0] + w, start[1],
+                start[0] + w, start[1] + h,
+                start[0], start[1] + h,
+                start[0], start[1]]
+        purpose = purposeNumber if isinstance(purposeNumber, int) else 0
+        self.boundaries.append((layerNumber, purpose, flat))
+
+    def addText(self, text, layerNumber=0, purposeNumber=0,
+                offsetInMicrons=(0, 0), magnification=None, rotate=None):
+        o = (self.userUnits(offsetInMicrons[0]),
+             self.userUnits(offsetInMicrons[1]))
+        purpose = purposeNumber if isinstance(purposeNumber, int) else 0
+        self.texts.append((str(text), layerNumber, purpose,
+                           float(o[0]), float(o[1])))
+
+    def addInstance(self, layoutToAdd, nameOfLayout=0, offsetInMicrons=(0, 0),
+                    mirror=None, rotate=None):
+        o = (self.userUnits(offsetInMicrons[0]),
+             self.userUnits(offsetInMicrons[1]))
+        if nameOfLayout == 0:
+            name = str(layoutToAdd.rootStructureName)
+        else:
+            name = str(nameOfLayout)
+        if name.endswith("\x00"):
+            name = name.rstrip("\x00")
+        # Same mirror/rotate resolution as vlsiLayout.addInstance
+        mirror_x = False
+        angle = 0.0
+        if mirror or rotate:
+            if mirror == "R90":
+                rotate = 90.0
+            if mirror == "R180":
+                rotate = 180.0
+            if mirror == "R270":
+                rotate = 270.0
+            if rotate:
+                angle = float(rotate)
+            if mirror == "x" or mirror == "MX":
+                mirror_x = True
+            if mirror == "y" or mirror == "MY":
+                mirror_x = True
+                angle = 180.0
+            if mirror == "xy" or mirror == "XY":
+                angle = 180.0
+        self.srefs.append((name, float(o[0]), float(o[1]), mirror_x, angle))
+
+    def addPath(self, *args, **kwargs):
+        raise NotImplementedError(
+            "path objects are not supported by the Rust GDS export")
+
+
 def export_design(design):
     """
-    Build the design's in-memory gdsMill layout (the first half of
-    gds_write) and export its structures into a cached Rust GdsLayout,
-    skipping the GDS serialize/parse round-trip entirely. Child structures
-    are immutable once built, so only new structures and the top structure
-    cross the boundary on later calls.
+    Export the design into a cached Rust GdsLayout, skipping the GDS
+    serialize/parse round-trip. The first call builds the gdsMill layout
+    once (populating all child structures); later calls re-export only
+    the top structure through _export_collector since children are
+    immutable once built.
     """
     from openram import debug
     from openram.gdsMill import gdsMill
     from openram.tech import GDS
 
     rs = load_openram_rs()
+
+    rl = getattr(design, "_rust_gds_layout", None)
+    if rl is not None:
+        top = str(design.gds.rootStructureName)
+        if top.endswith("\x00"):
+            top = top.rstrip("\x00")
+        collector = _export_collector(GDS["unit"])
+        design.clear_visited()
+        design.gds_write_file(collector)
+        # New child modules (e.g. via masters created by a later router)
+        # need their structure trees exported too.
+        for inst in design.insts:
+            cell_name = str(inst.mod.cell_name)
+            if not rl.has_structure(cell_name):
+                _export_structures(inst.mod.gds, rl, None)
+        rl.add_structure(top, collector.boundaries, collector.srefs,
+                         collector.texts)
+        rl.set_root(top)
+        return rl
 
     # Same rebuild logic as hierarchy_layout.gds_write
     if not design.is_library_cell and design.visited:
@@ -42,11 +143,20 @@ def export_design(design):
     root = str(layout.rootStructureName)
     if root.endswith("\x00"):
         root = root.rstrip("\x00")
+    _export_structures(layout, rl, root)
+    rl.set_root(root)
+    return rl
+
+
+def _export_structures(layout, rl, replace_root):
+    """ Convert a gdsMill layout's structures into the Rust layout,
+    skipping structures already exported (the root is always resent
+    when replace_root names it). """
     for name, s in layout.structures.items():
         sname = str(name)
         if sname.endswith("\x00"):
             sname = sname.rstrip("\x00")
-        if sname != root and rl.has_structure(sname):
+        if sname != replace_root and rl.has_structure(sname):
             continue
         boundaries = []
         for b in s.boundaries:
@@ -78,8 +188,6 @@ def export_design(design):
                           float(t.coordinates[0][0]),
                           float(t.coordinates[0][1])))
         rl.add_structure(sname, boundaries, srefs, texts)
-    rl.set_root(root)
-    return rl
 
 
 def _same_lpp(lpp1, lpp2):
@@ -117,6 +225,13 @@ class rust_layout:
 
         texts = self._layout.root_texts()
         unit = self.units[0]
+        # Resolve layer_override once: a failed `from openram.tech import`
+        # is not cached by the import system, so retrying it per label
+        # costs a full module search each time.
+        try:
+            from openram.tech import layer_override
+        except ImportError:
+            layer_override = {}
         for layer_number in self._layout.layers_in_use():
             lpp = (layer_number, None)
             labels = [t for t in texts if _same_lpp((t[1], t[2]), lpp)]
@@ -127,17 +242,13 @@ class rust_layout:
                 user_coordinate = [x * unit, y * unit]
                 pin_shapes = []
                 label_text = string
-                try:
-                    from openram.tech import layer_override
-                    if layer_override[label_text]:
-                        shapes = self.getAllShapes(
-                            (layer_override[label_text][0], None))
-                        if not shapes:
-                            shapes = self.getAllShapes(lpp)
-                        else:
-                            lpp = layer_override[label_text]
-                except Exception:
-                    pass
+                override = layer_override.get(label_text)
+                if override:
+                    shapes = self.getAllShapes((override[0], None))
+                    if not shapes:
+                        shapes = self.getAllShapes(lpp)
+                    else:
+                        lpp = override
                 for boundary in shapes:
                     if (boundary[0] <= user_coordinate[0] <= boundary[2] and
                             boundary[1] <= user_coordinate[1] <= boundary[3]):
