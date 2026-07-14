@@ -64,6 +64,49 @@ num_pex_runs = 0
 #     (outfile, errfile, resultsfile) = run_script(cell_name, "filter")
 
 
+def _write_extract_commands(f, cell_name, sp_name, extract, final_verification, pre=""):
+    """ The extraction + ext2spice command block shared by the combined
+    and split ext scripts. """
+    # Extract
+    if not sp_name:
+        f.write("port makeall\n")
+    else:
+        f.write("readspice {}\n".format(sp_name))
+    # Hack to work around unit scales in SkyWater
+    if OPTS.tech_name=="sky130":
+        f.write(pre + "extract style ngspice(si)\n")
+    if final_verification and OPTS.route_supplies:
+        f.write(pre + "extract unique all\n")
+    # Coupling capacitances dominate extraction time and are discarded
+    # anyway (ext2spice cthresh infinite below); don't compute them.
+    f.write(pre + "extract no coupling\n")
+    f.write(pre + "extract all\n")
+    f.write(pre + "select top cell\n")
+    f.write(pre + "feedback why\n")
+    f.write('puts "Finished extract"\n')
+    # f.write(pre + "ext2spice hierarchy on\n")
+    # f.write(pre + "ext2spice scale off\n")
+    # lvs exists in 8.2.79, but be backword compatible for now
+    # f.write(pre + "ext2spice lvs\n")
+    f.write(pre + "ext2spice hierarchy on\n")
+    f.write(pre + "ext2spice format ngspice\n")
+    f.write(pre + "ext2spice cthresh infinite\n")
+    f.write(pre + "ext2spice rthresh infinite\n")
+    f.write(pre + "ext2spice renumber off\n")
+    f.write(pre + "ext2spice scale off\n")
+    f.write(pre + "ext2spice blackbox on\n")
+    f.write(pre + "ext2spice subcircuit top on\n")
+    f.write(pre + "ext2spice global off\n")
+
+    # Can choose hspice, ngspice, or spice3,
+    # but they all seem compatible enough.
+    f.write(pre + "ext2spice format ngspice\n")
+    f.write(pre + "ext2spice {}\n".format(cell_name))
+    f.write(pre + "select top cell\n")
+    f.write(pre + "feedback why\n")
+    f.write('puts "Finished ext2spice"\n')
+
+
 def write_drc_script(cell_name, gds_name, extract, final_verification, output_path, sp_name=None):
     """ Write a magic script to perform DRC and optionally extraction. """
     global OPTS
@@ -119,45 +162,13 @@ def write_drc_script(cell_name, gds_name, extract, final_verification, output_pa
     f.write("cellname delete \\(UNNAMED\\)\n")
     f.write("writeall force\n")
 
-    # Extract
-    if not sp_name:
-        f.write("port makeall\n")
-    else:
-        f.write("readspice {}\n".format(sp_name))
     if not extract:
         pre = "#"
     else:
         pre = ""
-    # Hack to work around unit scales in SkyWater
-    if OPTS.tech_name=="sky130":
-        f.write(pre + "extract style ngspice(si)\n")
-    if final_verification and OPTS.route_supplies:
-        f.write(pre + "extract unique all\n")
-    f.write(pre + "extract all\n")
-    f.write(pre + "select top cell\n")
-    f.write(pre + "feedback why\n")
-    f.write('puts "Finished extract"\n')
-    # f.write(pre + "ext2spice hierarchy on\n")
-    # f.write(pre + "ext2spice scale off\n")
-    # lvs exists in 8.2.79, but be backword compatible for now
-    # f.write(pre + "ext2spice lvs\n")
-    f.write(pre + "ext2spice hierarchy on\n")
-    f.write(pre + "ext2spice format ngspice\n")
-    f.write(pre + "ext2spice cthresh infinite\n")
-    f.write(pre + "ext2spice rthresh infinite\n")
-    f.write(pre + "ext2spice renumber off\n")
-    f.write(pre + "ext2spice scale off\n")
-    f.write(pre + "ext2spice blackbox on\n")
-    f.write(pre + "ext2spice subcircuit top on\n")
-    f.write(pre + "ext2spice global off\n")
 
-    # Can choose hspice, ngspice, or spice3,
-    # but they all seem compatible enough.
-    f.write(pre + "ext2spice format ngspice\n")
-    f.write(pre + "ext2spice {}\n".format(cell_name))
-    f.write(pre + "select top cell\n")
-    f.write(pre + "feedback why\n")
-    f.write('puts "Finished ext2spice"\n')
+    _write_extract_commands(f, cell_name, sp_name, extract,
+                            final_verification, pre)
 
     f.write("quit -noprompt\n")
     f.write("EOF\n")
@@ -266,7 +277,9 @@ def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=
 def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
     """Run DRC and LVS together: one GDS read/extraction, then the Magic
     DRC and Netgen LVS scripts concurrently (DRC needs the written .mag
-    view, LVS needs the extracted .spice; they are independent). """
+    view, LVS needs the extracted .spice; they are independent).
+    NOTE: DRC cannot overlap the extraction itself — concurrent Magic
+    sessions fight over .mag file locks (this Magic has no -nolock). """
 
     global num_drc_runs
     global num_lvs_runs
