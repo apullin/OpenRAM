@@ -1,0 +1,33 @@
+name: Rust kernels
+on:
+  push:
+    paths: ["rust/**"]
+  pull_request:
+    paths: ["rust/**"]
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release --manifest-path rust/Cargo.toml
+      - name: Unit tests
+        run: cargo test --release --manifest-path rust/Cargo.toml
+      - name: CPython round() parity fuzz
+        run: |
+          python3 - <<'PY'
+          import random
+          import importlib.util, importlib.machinery
+          loader = importlib.machinery.ExtensionFileLoader(
+              "openram_rs", "rust/target/release/libopenram_rs.so")
+          spec = importlib.util.spec_from_loader("openram_rs", loader)
+          m = importlib.util.module_from_spec(spec)
+          loader.exec_module(m)
+          random.seed(7)
+          for i in range(500000):
+              nd = random.choice([2, 3, 4])
+              x = random.uniform(-2000, 2000)
+              assert round(x, nd) == m.snap(x, nd), (x, nd)
+          print("snap parity OK")
+          PY
