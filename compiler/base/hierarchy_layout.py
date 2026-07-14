@@ -1878,20 +1878,34 @@ class layout():
         # This isn't efficient, but easy for now
         # Load the gds file and read in all the shapes
         self.gds_write(gds_filename)
-        layout = gdsMill.VlsiLayout(units=GDS["unit"])
-        reader = gdsMill.Gds2reader(layout)
-        reader.loadFromFile(gds_filename)
-        top_name = layout.rootStructureName
 
-        if not self.bbox:
-            # The boundary will determine the limits to the size
-            # of the routing grid
-            boundary = layout.measureBoundary(top_name)
-            # These must be un-indexed to get rid of the numpy array type
-            ll = vector(boundary[0][0].item(), boundary[0][1].item())
-            ur = vector(boundary[1][0].item(), boundary[1][1].item())
+        rs = None
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.router.rust_router import load_openram_rs
+            rs = load_openram_rs()
+
+        if rs is not None:
+            if not self.bbox:
+                bounds = rs.GdsLayout(gds_filename).measure_boundary()
+                ll = vector(bounds[0], bounds[1])
+                ur = vector(bounds[2], bounds[3])
+            else:
+                ll, ur = self.bbox
         else:
-            ll, ur = self.bbox
+            layout = gdsMill.VlsiLayout(units=GDS["unit"])
+            reader = gdsMill.Gds2reader(layout)
+            reader.loadFromFile(gds_filename)
+            top_name = layout.rootStructureName
+
+            if not self.bbox:
+                # The boundary will determine the limits to the size
+                # of the routing grid
+                boundary = layout.measureBoundary(top_name)
+                # These must be un-indexed to get rid of the numpy array type
+                ll = vector(boundary[0][0].item(), boundary[0][1].item())
+                ur = vector(boundary[1][0].item(), boundary[1][1].item())
+            else:
+                ll, ur = self.bbox
 
         ll_offset = vector(0, 0)
         ur_offset = vector(0, 0)

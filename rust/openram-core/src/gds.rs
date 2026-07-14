@@ -399,3 +399,64 @@ impl Layout {
 fn rotate_scale_point(pt: (f64, f64), p: Placement) -> (f64, f64) {
     (pt.0 * p.u.0 + pt.1 * p.v.0, pt.0 * p.u.1 + pt.1 * p.v.1)
 }
+
+impl Layout {
+    /// vlsiLayout.measureBoundary with the perf-branch memoization
+    /// semantics: per placement, fold the structure's origin-free bounds
+    /// through updateBoundary — including its quirk where an accumulated
+    /// boundary with any 0.0 component reseeds (Python truthiness check).
+    /// Returns user-unit (llx, lly, urx, ury).
+    pub fn measure_boundary(&self) -> Option<(f64, f64, f64, f64)> {
+        let unit = self.user_unit;
+        let mut cell: Option<[f64; 4]> = None;
+        for p in self.flatten() {
+            let mut bounds: Option<[f64; 4]> = None;
+            for bd in &self.structures[p.struct_index].boundaries {
+                let t0 = rotate_scale_point(bd.coords[0], p);
+                let t2 = rotate_scale_point(bd.coords[2], p);
+                let r = [
+                    t0.0.min(t2.0),
+                    t0.1.min(t2.1),
+                    t0.0.max(t2.0),
+                    t0.1.max(t2.1),
+                ];
+                bounds = Some(match bounds {
+                    None => r,
+                    Some(mut b) => {
+                        if b[0] > r[0] { b[0] = r[0]; }
+                        if b[1] > r[1] { b[1] = r[1]; }
+                        if b[2] < r[2] { b[2] = r[2]; }
+                        if b[3] < r[3] { b[3] = r[3]; }
+                        b
+                    }
+                });
+            }
+            if let Some(b) = bounds {
+                let placed = [
+                    b[0] + p.origin.0,
+                    b[1] + p.origin.1,
+                    b[2] + p.origin.0,
+                    b[3] + p.origin.1,
+                ];
+                cell = Some(match cell {
+                    None => placed,
+                    Some(mut c) => {
+                        // NOTE: 0.0 (and -0.0) are falsy in Python, so the
+                        // reference implementation discards the running
+                        // bounds here; NaN is truthy and keeps folding.
+                        if !(c[0] != 0.0 && c[1] != 0.0 && c[2] != 0.0 && c[3] != 0.0) {
+                            placed
+                        } else {
+                            if c[0] > placed[0] { c[0] = placed[0]; }
+                            if c[1] > placed[1] { c[1] = placed[1]; }
+                            if c[2] < placed[2] { c[2] = placed[2]; }
+                            if c[3] < placed[3] { c[3] = placed[3]; }
+                            c
+                        }
+                    }
+                });
+            }
+        }
+        cell.map(|c| (unit * c[0], unit * c[1], unit * c[2], unit * c[3]))
+    }
+}

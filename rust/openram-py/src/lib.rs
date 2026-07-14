@@ -127,6 +127,11 @@ impl GdsLayout {
         }
     }
 
+    /// measureBoundary: user-unit (llx, lly, urx, ury) of the design.
+    fn measure_boundary(&self, py: Python<'_>) -> Option<(f64, f64, f64, f64)> {
+        py.detach(|| self.layout.measure_boundary())
+    }
+
     /// Layer numbers in first-seen order (gdsMill layerNumbersInUse).
     fn layers_in_use(&self) -> Vec<i16> {
         self.layout.layers_in_use.clone()
