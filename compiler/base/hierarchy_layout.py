@@ -240,24 +240,47 @@ class layout():
     def compute_layer_pitch(layer_stack, preferred):
 
         (layer1, via, layer2) = layer_stack
+        # setup_contacts stores each contact by the lower layer of the stack.
+        # When compute_pitch checks a layer against the stack below it, it
+        # passes the stack in reverse order. In that case use the original
+        # contact and measure its second-layer enclosure. Looking up the
+        # reversed first layer can silently select a different via above the
+        # layer and underestimate the required pitch.
+        normalized_stack = tuple(layer_stack)
+        known_stacks = [tuple(stack) for stack in tech_layer_stacks]
+        if normalized_stack in known_stacks:
+            contact_layer = layer1
+            contact_side = "first_layer"
+        elif normalized_stack[::-1] in known_stacks:
+            contact_layer = layer2
+            contact_side = "second_layer"
+        else:
+            # Preserve the historical fallback for caller-supplied stacks.
+            contact_layer = layer1
+            contact_side = "first_layer"
+
         try:
-            if layer1 == "poly" or layer1 == "active":
-                contact1 = getattr(layout, layer1 + "_contact")
+            if contact_layer == "poly" or contact_layer == "active":
+                contact1 = getattr(layout, contact_layer + "_contact")
             else:
-                contact1 = getattr(layout, layer1 + "_via")
+                contact1 = getattr(layout, contact_layer + "_via")
         except AttributeError:
             contact1 = getattr(layout, layer2 + "_via")
 
         if preferred:
             if preferred_directions[layer1] == "V":
-                contact_width = contact1.first_layer_width
+                contact_width = getattr(contact1,
+                                        contact_side + "_width")
             else:
-                contact_width = contact1.first_layer_height
+                contact_width = getattr(contact1,
+                                        contact_side + "_height")
         else:
             if preferred_directions[layer1] == "V":
-                contact_width = contact1.first_layer_height
+                contact_width = getattr(contact1,
+                                        contact_side + "_height")
             else:
-                contact_width = contact1.first_layer_width
+                contact_width = getattr(contact1,
+                                        contact_side + "_width")
         layer_space = getattr(layout, layer1 + "_space")
 
 
