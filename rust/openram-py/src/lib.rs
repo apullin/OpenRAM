@@ -175,6 +175,77 @@ impl RouterStore {
     }
 }
 
+/// Spice netlist model + serializer (pilot for Rust-owned netlists).
+#[pyclass]
+struct NetlistDb {
+    db: openram_core::netlist::NetlistDb,
+}
+
+#[pymethods]
+impl NetlistDb {
+    #[new]
+    fn new() -> Self {
+        NetlistDb {
+            db: openram_core::netlist::NetlistDb::default(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_module(
+        &mut self,
+        name: &str,
+        cell_name: &str,
+        no_instances: bool,
+        spice_text: Option<String>,
+        lvs_text: Option<String>,
+        pins: Vec<(String, String)>,
+        comments: Vec<String>,
+        spice_device: Option<String>,
+        lvs_device: Option<String>,
+        trim_insts: Vec<String>,
+    ) -> usize {
+        let id = self.db.modules.len();
+        self.db.modules.push(openram_core::netlist::NlModule {
+            name: name.to_string(),
+            cell_name: cell_name.to_string(),
+            no_instances,
+            spice_text,
+            lvs_text,
+            pins,
+            comments,
+            spice_device,
+            lvs_device,
+            children: Vec::new(),
+            insts: Vec::new(),
+            trim_insts: trim_insts.into_iter().collect(),
+        });
+        id
+    }
+
+    fn set_children(&mut self, id: usize, children: Vec<usize>) {
+        self.db.modules[id].children = children;
+    }
+
+    fn add_inst(&mut self, id: usize, name: &str, module: usize, conns: Vec<String>, has_pins: bool) {
+        self.db.modules[id].insts.push(openram_core::netlist::NlInst {
+            name: name.to_string(),
+            module,
+            conns,
+            has_pins,
+        });
+    }
+
+    fn set_top(&mut self, id: usize) {
+        self.db.top = Some(id);
+    }
+
+    fn write_spice(&self, py: Python<'_>, path: &str, lvs: bool, trim: bool) -> PyResult<()> {
+        let text = py.detach(|| self.db.write_spice(lvs, trim));
+        std::fs::write(path, text)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+    }
+}
+
 /// CPython round() parity check hook for tests.
 #[pyfunction]
 fn snap(x: f64, ndigits: usize) -> f64 {
@@ -336,6 +407,7 @@ impl GdsLayout {
 fn openram_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Router>()?;
     m.add_class::<RouterStore>()?;
+    m.add_class::<NetlistDb>()?;
     m.add_class::<GdsLayout>()?;
     m.add_function(wrap_pyfunction!(snap, m)?)?;
     Ok(())

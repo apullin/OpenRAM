@@ -405,6 +405,12 @@ class spice():
     def sp_write(self, spname, lvs=False, trim=False):
         """Writes the spice to files"""
         debug.info(3, "Writing to {0}".format(spname))
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.router.rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from openram.base.rust_netlist import export_netlist
+                export_netlist(self).write_spice(spname, lvs, trim)
+                return
         spfile = open(spname, 'w')
         spfile.write("*FIRST LINE IS A COMMENT\n")
         usedMODS = list()
