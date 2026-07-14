@@ -83,11 +83,7 @@ class sky130_custom_spice_views_test(openram_test):
                 self.assert_geometry_units(simulation_path, expect_bare=True)
                 self.assert_geometry_units(lvs_path, expect_bare=False)
 
-    def check_ngspice_operating_points(self):
-        ngspice = shutil.which("ngspice")
-        if not ngspice:
-            self.skipTest("ngspice is not installed")
-
+    def check_ngspice_operating_points(self, ngspice):
         pdk_root = Path(os.environ["PDK_ROOT"])
         model = pdk_root / "sky130A" / "libs.tech" / "ngspice" / "sky130.lib.spice"
         self.assertTrue(model.is_file(), "Missing SKY130 ngspice model {}".format(model))
@@ -150,11 +146,9 @@ class sky130_custom_spice_views_test(openram_test):
             self.assertNotIn("simulation interrupted due to error", log_text.lower())
             self.assertIn("total analysis time", log_text.lower())
 
-    def check_netgen_lvs_views(self):
+    def check_magic_netgen_lvs_views(self):
         from openram import verify
 
-        if not OPTS.lvs_exe or OPTS.lvs_exe[0] != "netgen":
-            self.skipTest("Netgen LVS is not selected")
         tech_dir = Path(OPTS.openram_tech)
         for cell_name in self.custom_cells:
             with self.subTest(cell=cell_name, check="netgen-lvs"):
@@ -169,13 +163,38 @@ class sky130_custom_spice_views_test(openram_test):
         if OPTS.tech_name != "sky130":
             self.skipTest("SKY130-specific custom-cell test")
         config_file = "{}/tests/configs/config".format(os.environ["OPENRAM_HOME"])
-        openram.init_openram(config_file, is_unit_test=True)
+        original_use_nix = OPTS.use_nix
+        initialized = False
         try:
+            # Unit tests run tools already present in PATH.  Leaving this at its
+            # default would make run_script wrap Magic and Netgen in a second
+            # `nix develop`, which is both unnecessary and unavailable in the
+            # normal all-tools test image.
+            OPTS.use_nix = False
+            openram.init_openram(config_file, is_unit_test=True)
+            initialized = True
             self.check_view_selection()
-            self.check_ngspice_operating_points()
-            self.check_netgen_lvs_views()
+
+            ngspice = shutil.which("ngspice")
+            with self.subTest(tool="ngspice"):
+                if not ngspice:
+                    self.skipTest("ngspice is not installed")
+                self.check_ngspice_operating_points(ngspice)
+
+            drc_tool = OPTS.drc_exe[0] if OPTS.drc_exe else None
+            lvs_tool = OPTS.lvs_exe[0] if OPTS.lvs_exe else None
+            with self.subTest(tools="magic+netgen"):
+                if (drc_tool, lvs_tool) != ("magic", "netgen"):
+                    self.skipTest(
+                        "Magic/Netgen are not selected (DRC={}, LVS={})".format(
+                            drc_tool, lvs_tool
+                        )
+                    )
+                self.check_magic_netgen_lvs_views()
         finally:
-            openram.end_openram()
+            if initialized:
+                openram.end_openram()
+            OPTS.use_nix = original_use_nix
 
 
 if __name__ == "__main__":
