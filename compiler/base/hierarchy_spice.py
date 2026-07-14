@@ -218,6 +218,7 @@ class spice():
         self.insts[-1].connect_spice_pins(ordered_nets)
         self._inst_conns_cache = None
         self._inst_conns_lower_cache = None
+        self._net_alias_index = None
 
     def create_nets(self, names_list):
         nets = []
@@ -736,32 +737,58 @@ class spice():
             self._inst_conns_lower_cache = conns_lower
         return conns_lower
 
+    def _get_net_alias_index(self):
+        """
+        Connection-name index for is_net_alias. The reference scan walks
+        every instance's connections per query (rows*cols on arrays); the
+        result only depends on (a) whether a name appears among the
+        lowered connections at all and (b) the first (module, module pin)
+        per distinct submodule for each connection name in scan order, so
+        both are precomputed here. Invalidated by connect_inst.
+        """
+        idx = getattr(self, "_net_alias_index", None)
+        if idx is None:
+            all_conns = set()
+            recurse = {}
+            for subinst, inst_conns in zip(self.insts,
+                                           self.get_instance_connections_lower()):
+                submod = subinst.mod
+                for conn_lower, mod_pin in zip(inst_conns, submod.pins):
+                    all_conns.add(conn_lower)
+                    entry = recurse.get(conn_lower)
+                    if entry is None:
+                        recurse[conn_lower] = entry = ([], set())
+                    (pairs, mods) = entry
+                    if submod not in mods:
+                        mods.add(submod)
+                        pairs.append((submod, mod_pin))
+            pins_lower = frozenset(pin.lower() for pin in self.pins)
+            idx = (all_conns, recurse, pins_lower)
+            self._net_alias_index = idx
+        return idx
+
     def is_net_alias(self, known_net, net_alias, mod, exclusion_set):
         """
         Checks if the alias_net in input mod is the same as the input net for this mod (self).
         """
         if self in exclusion_set:
             return False
-        # Lowercase once; the recursion re-lowers the same names millions
-        # of times on big arrays otherwise.
         known_lower = known_net.lower()
         alias_lower = net_alias.lower()
-        is_target_mod = (self == mod) and known_lower == alias_lower
-        # Check ports of this mod
-        if is_target_mod:
-            for pin in self.pins:
-                if pin.lower() == alias_lower:
+        (all_conns, recurse, pins_lower) = self._get_net_alias_index()
+        # The reference interleaves these checks in one scan, but every
+        # branch just returns True (the recursion is side-effect free), so
+        # the disjunction order does not change the result.
+        if (self == mod) and known_lower == alias_lower:
+            if alias_lower in pins_lower:
+                return True
+            if alias_lower in all_conns:
+                return True
+        entry = recurse.get(known_lower)
+        if entry is not None:
+            for (submod, mod_pin) in entry[0]:
+                if submod.is_net_alias(mod_pin, net_alias, mod, exclusion_set):
                     return True
-        # Check connections of all other subinsts
-        mod_set = set()
-        for subinst, inst_conns in zip(self.insts, self.get_instance_connections_lower()):
-            for conn_lower, mod_pin in zip(inst_conns, subinst.mod.pins):
-                if is_target_mod and conn_lower == alias_lower:
-                    return True
-                elif conn_lower == known_lower and subinst.mod not in mod_set:
-                    if subinst.mod.is_net_alias(mod_pin, net_alias, mod, exclusion_set):
-                        return True
-                    mod_set.add(subinst.mod)
         return False
 
     def is_net_alias_name_check(self, parent_net, child_net, alias_net, mod):
