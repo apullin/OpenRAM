@@ -8,6 +8,9 @@
 import math
 from openram import debug
 
+# lpp -> resolved layer name (verified against the live tech on each hit)
+_lpp_name_cache = {}
+
 
 def pin_sort_key(pin):
     """
@@ -54,19 +57,31 @@ class pin_layout:
         debug.check(self.width() > 0, "Zero width pin.")
         debug.check(self.height() > 0, "Zero height pin.")
 
-        # These are the valid pin layers
-        valid_layers = {x: layer[x] for x in layer_indices.keys()}
-
         # if it's a string, use the name
         if type(layer_name_pp) == str:
             self._layer = layer_name_pp
         # else it is required to be a lpp
         else:
+            # Resolve lpp -> layer name through a cache: the valid-layer
+            # dict was rebuilt and scanned for every pin construction.
+            cache_key = (layer_name_pp[0], layer_name_pp[1])
+            cached_name = _lpp_name_cache.get(cache_key)
+            if cached_name is not None:
+                cached_lpp = layer.get(cached_name)
+                if cached_lpp and self.same_lpp(layer_name_pp, cached_lpp):
+                    self._layer = cached_name
+                    self.lpp = layer[self._layer]
+                    self._recompute_hash()
+                    return
+
+            # These are the valid pin layers
+            valid_layers = {x: layer[x] for x in layer_indices.keys()}
             for (layer_name, lpp) in valid_layers.items():
                 if not lpp:
                     continue
                 if self.same_lpp(layer_name_pp, lpp):
                     self._layer = layer_name
+                    _lpp_name_cache[cache_key] = layer_name
                     break
 
             else:

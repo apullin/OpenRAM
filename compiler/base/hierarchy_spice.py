@@ -14,6 +14,15 @@ from openram import debug
 from openram import tech
 from openram import OPTS
 from collections import OrderedDict
+
+
+def _wrap_spice_line(text, sep):
+    """ sep.join(textwrap.wrap(text)) with the dominant short-line case
+    fast-pathed (textwrap pays a regex split per call). Only taken when
+    wrapping and whitespace collapsing cannot change the text. """
+    if len(text) <= 70 and "  " not in text and text == text.strip():
+        return text
+    return sep.join(tr.wrap(text))
 from .delay_data import delay_data
 from .wire_spice_model import wire_spice_model
 from .power_data import power_data
@@ -208,6 +217,7 @@ class spice():
         ordered_nets = self.create_nets(ordered_args)
         self.insts[-1].connect_spice_pins(ordered_nets)
         self._inst_conns_cache = None
+        self._inst_conns_lower_cache = None
 
     def create_nets(self, names_list):
         nets = []
@@ -321,7 +331,7 @@ class spice():
                 return
 
             # write out the first spice line (the subcircuit)
-            wrapped_pins = "\n+ ".join(tr.wrap(" ".join(list(self.pins))))
+            wrapped_pins = _wrap_spice_line(" ".join(list(self.pins)), "\n+ ")
             sp.write("\n.SUBCKT {0}\n+ {1}\n".format(self.cell_name,
                                                      wrapped_pins))
 
@@ -366,12 +376,12 @@ class spice():
                     sp.write("\n")
                 else:
                     if trim and inst.name in self.trim_insts:
-                        wrapped_connections = "\n*+ ".join(tr.wrap(" ".join(inst.get_connections())))
+                        wrapped_connections = _wrap_spice_line(" ".join(inst.get_connections()), "\n*+ ")
                         sp.write("X{0}\n*+ {1}\n*+ {2}\n".format(inst.name,
                                                                  wrapped_connections,
                                                                  inst.mod.cell_name))
                     else:
-                        wrapped_connections = "\n+ ".join(tr.wrap(" ".join(inst.get_connections())))
+                        wrapped_connections = _wrap_spice_line(" ".join(inst.get_connections()), "\n+ ")
                         sp.write("X{0}\n+ {1}\n+ {2}\n".format(inst.name,
                                                                wrapped_connections,
                                                                inst.mod.cell_name))
@@ -716,6 +726,16 @@ class spice():
             self._inst_conns_cache = conns
         return conns
 
+    def get_instance_connections_lower(self):
+        """ Lowercased twin of get_instance_connections (alias searches
+        compare case-insensitively millions of times). """
+        conns_lower = getattr(self, "_inst_conns_lower_cache", None)
+        if conns_lower is None:
+            conns_lower = [[c.lower() for c in conns]
+                           for conns in self.get_instance_connections()]
+            self._inst_conns_lower_cache = conns_lower
+        return conns_lower
+
     def is_net_alias(self, known_net, net_alias, mod, exclusion_set):
         """
         Checks if the alias_net in input mod is the same as the input net for this mod (self).
@@ -734,9 +754,8 @@ class spice():
                     return True
         # Check connections of all other subinsts
         mod_set = set()
-        for subinst, inst_conns in zip(self.insts, self.get_instance_connections()):
-            for inst_conn, mod_pin in zip(inst_conns, subinst.mod.pins):
-                conn_lower = inst_conn.lower()
+        for subinst, inst_conns in zip(self.insts, self.get_instance_connections_lower()):
+            for conn_lower, mod_pin in zip(inst_conns, subinst.mod.pins):
                 if is_target_mod and conn_lower == alias_lower:
                     return True
                 elif conn_lower == known_lower and subinst.mod not in mod_set:
