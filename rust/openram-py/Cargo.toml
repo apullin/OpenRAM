@@ -1,0 +1,14 @@
+[package]
+name = "openram-py"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "PyO3 bindings for openram-core"
+
+[lib]
+name = "openram_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+openram-core = { path = "../openram-core" }
+pyo3 = { version = "0.26", features = ["extension-module", "abi3-py39"] }

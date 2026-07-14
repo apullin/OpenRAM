@@ -60,7 +60,7 @@ class signal_escape_router(router):
             # Change fake pin's name so the graph will treat it as routable
             target.name = source.name
             # Create the graph
-            g = graph(self)
+            g = self.make_graph()
             g.create_graph(source, target)
             # Find the shortest path from source to target
             path = g.find_shortest_path()

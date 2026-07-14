@@ -74,7 +74,7 @@ class supply_router(router):
             # Route closest pins according to the minimum spanning tree
             for source, target in self.get_mst_pairs(list(pins)):
                 # Create the graph
-                g = graph(self)
+                g = self.make_graph()
                 g.create_graph(source, target)
                 # Find the shortest path from source to target
                 path = g.find_shortest_path()
