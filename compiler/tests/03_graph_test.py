@@ -74,6 +74,8 @@ class graph_test(openram_test):
         left = graph_node((0, 0, 0))
         removed = graph_node((1, 0, 0))
         right = graph_node((2, 0, 0))
+        with self.assertRaises(AttributeError):
+            left.unexpected_attribute = True
         removed.add_neighbor(left)
         removed.add_neighbor(right)
         removed.remove = True

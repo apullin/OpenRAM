@@ -10,6 +10,8 @@ from openram.tech import drc
 class graph_node:
     """ This class represents a node on the graph. """
 
+    __slots__ = ("id", "center", "neighbors", "remove")
+
     # This is used to assign unique ids to nodes
     next_id = 0
 
