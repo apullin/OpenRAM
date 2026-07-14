@@ -59,7 +59,10 @@ def parse_args():
         optparse.make_option("-j", "--threads",
                              action="store",
                              type="int",
-                             help="Specify the number of threads (default: 1)",
+                             help="Specify the number of parallel "
+                                  "characterization jobs (default: 1; keep 1 "
+                                  "when dispatching many OpenRAM processes "
+                                  "externally)",
                              dest="num_threads"),
         optparse.make_option("-m", "--sim_threads",
                              action="store",
