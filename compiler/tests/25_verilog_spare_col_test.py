@@ -29,23 +29,44 @@ class verilog_spare_col_test(openram_test):
 
         from openram.base.verilog import verilog
 
-        model = verilog()
-        model.vf = io.StringIO()
-        model.word_size = 8
-        model.write_size = 8
-        model.num_spare_cols = 1
-        model.readwrite_ports = [0]
-        model.write_ports = [0]
+        for word_size in (8, 32):
+            with self.subTest(word_size=word_size):
+                model = verilog()
+                model.vf = io.StringIO()
+                model.word_size = word_size
+                model.write_size = word_size
+                model.num_spare_cols = 1
+                model.readwrite_ports = [0]
+                model.read_ports = [0]
+                model.write_ports = [0]
 
-        model.add_write_block(0)
-        generated = model.vf.getvalue()
+                model.add_write_block(0)
+                generated = model.vf.getvalue()
 
-        self.assertIn(
-            "mem[addr0_reg][7:0] = din0_reg[7:0];", generated)
-        self.assertIn(
-            "mem[addr0_reg][8] = din0_reg[8];", generated)
-        self.assertNotIn(
-            "mem[addr0_reg][6:0] = din0_reg[6:0];", generated)
+                normal_upper = word_size - 1
+                spare_bit = word_size
+                self.assertIn(
+                    "mem[addr0_reg][{0}:0] = "
+                    "din0_reg[{0}:0];".format(normal_upper), generated)
+                self.assertIn(
+                    "mem[addr0_reg][{0}] = "
+                    "din0_reg[{0}];".format(spare_bit), generated)
+                self.assertNotIn(
+                    "mem[addr0_reg][{0}:0] = "
+                    "din0_reg[{0}:0];".format(normal_upper - 1),
+                    generated)
+
+                model.vf = io.StringIO()
+                model.add_flops(0)
+                generated = model.vf.getvalue()
+
+                full_width = word_size + model.num_spare_cols
+                self.assertIn(
+                    "#(T_HOLD) dout0 = {0}'bx;".format(full_width),
+                    generated)
+                self.assertNotIn(
+                    "#(T_HOLD) dout0 = {0}'bx;".format(word_size),
+                    generated)
 
         openram.end_openram()
 
