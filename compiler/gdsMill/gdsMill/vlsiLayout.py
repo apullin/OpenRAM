@@ -679,15 +679,46 @@ class VlsiLayout:
     def measureSizeInStructure(self, structure, cellBoundary):
         (structureName, structureOrigin,
          structureuVector, structurevVector) = structure
-        for boundary in self.structures[str(structureName)].boundaries:
-            left_bottom=boundary.coordinates[0]
-            right_top=boundary.coordinates[2]
-            thisBoundary=[left_bottom[0],left_bottom[1],right_top[0],right_top[1]]
-            thisBoundary=self.transformRectangle(thisBoundary,structureuVector,structurevVector)
-            thisBoundary=[thisBoundary[0]+structureOrigin[0],thisBoundary[1]+structureOrigin[1],
-            thisBoundary[2]+structureOrigin[0],thisBoundary[3]+structureOrigin[1]]
-            cellBoundary=self.updateBoundary(thisBoundary,cellBoundary)
-        return cellBoundary
+        name = str(structureName)
+        boundaries = self.structures[name].boundaries
+        if not boundaries:
+            return cellBoundary
+        # Cache each structure's origin-free bounds per transform so repeated
+        # instances (e.g. thousands of identical bitcells in the xyTree) are
+        # measured once instead of re-transforming every boundary. The origin
+        # translation is applied per instance below; fp addition is monotone,
+        # so folding the cached bounds is identical to folding each boundary.
+        cache = getattr(self, "_structureBoundsCache", None)
+        if cache is None:
+            cache = self._structureBoundsCache = {}
+        key = (name,
+               float(structureuVector[0][0]), float(structureuVector[1][0]),
+               float(structurevVector[0][0]), float(structurevVector[1][0]))
+        cached = cache.get(key)
+        if cached is not None and cached[0] == len(boundaries):
+            bounds = cached[1]
+        else:
+            bounds = None
+            for boundary in boundaries:
+                left_bottom=boundary.coordinates[0]
+                right_top=boundary.coordinates[2]
+                thisBoundary=[left_bottom[0],left_bottom[1],right_top[0],right_top[1]]
+                thisBoundary=self.transformRectangle(thisBoundary,structureuVector,structurevVector)
+                if bounds is None:
+                    bounds = list(thisBoundary)
+                else:
+                    if bounds[0] > thisBoundary[0]:
+                        bounds[0] = thisBoundary[0]
+                    if bounds[1] > thisBoundary[1]:
+                        bounds[1] = thisBoundary[1]
+                    if bounds[2] < thisBoundary[2]:
+                        bounds[2] = thisBoundary[2]
+                    if bounds[3] < thisBoundary[3]:
+                        bounds[3] = thisBoundary[3]
+            cache[key] = (len(boundaries), bounds)
+        placedBoundary=[bounds[0]+structureOrigin[0],bounds[1]+structureOrigin[1],
+        bounds[2]+structureOrigin[0],bounds[3]+structureOrigin[1]]
+        return self.updateBoundary(placedBoundary,cellBoundary)
 
     def updateBoundary(self,thisBoundary,cellBoundary):
         [left_bott_X,left_bott_Y,right_top_X,right_top_Y]=thisBoundary
