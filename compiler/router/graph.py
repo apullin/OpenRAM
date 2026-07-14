@@ -24,6 +24,7 @@ class graph:
         self.router = router
         self.source_nodes = []
         self.target_nodes = []
+        self._node_blockage_rules = None
 
 
     def is_routable(self, shape):
@@ -117,18 +118,23 @@ class graph:
         blockage_tree = self.blockage_bbox_trees[z]
         if blockage_tree is None:
             return False
+        rules = self._node_blockage_rules
+        if rules is None:
+            wide = self.router.track_wire
+            half_wide = self.router.half_wire
+            spacing = snap(self.router.track_space + half_wide + drc["grid"])
+            rules = (wide, half_wide, spacing)
+            self._node_blockage_rules = rules
+        else:
+            wide, half_wide, spacing = rules
 
         def closest(value, checklist):
             """ Return the distance of the closest value in the checklist. """
             diffs = [abs(value - other) for other in checklist]
             return snap(min(diffs))
 
-        wide = self.router.track_wire
-        half_wide = self.router.half_wire
-        spacing = snap(self.router.track_space + half_wide + drc["grid"])
         blocked = False
         for blockage in blockage_tree.iterate_point(p):
-            ll, ur = blockage.rect
             # Not on the same layer
             if self.router.get_zindex(blockage.lpp) != z:
                 continue
@@ -437,9 +443,10 @@ class graph:
     def mark_blocked_nodes(self):
         """ Mark graph nodes to be removed that are blocked by a blockage. """
 
+        is_blocked = self.is_node_blocked
         for i in range(len(self.nodes) - 1, -1, -1):
             node = self.nodes[i]
-            if self.is_node_blocked(node):
+            if is_blocked(node):
                 node.remove = True
 
 

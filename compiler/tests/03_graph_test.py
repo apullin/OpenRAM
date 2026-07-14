@@ -261,6 +261,22 @@ class graph_test(openram_test):
         probe_tree.blockages = [inflated_hit]
         self.assertFalse(probe_graph.is_probe_blocked(probe_p1, probe_p2))
 
+        rule_router = SimpleNamespace(
+            track_wire=2, half_wire=1, track_space=3)
+        rule_graph = graph(rule_router)
+        rule_graph.blockage_bbox_trees = [None, None]
+        rule_node = graph_node((0, 0, 0))
+        self.assertFalse(rule_graph.is_node_blocked(rule_node))
+        self.assertIsNone(rule_graph._node_blockage_rules)
+        rule_graph.blockage_bbox_trees[0] = SimpleNamespace(
+            iterate_point=lambda _point: ())
+        self.assertFalse(rule_graph.is_node_blocked(rule_node))
+        cached_rules = rule_graph._node_blockage_rules
+        self.assertEqual(cached_rules[:2], (2, 1))
+        rule_router.track_wire = 99
+        self.assertFalse(rule_graph.is_node_blocked(rule_node))
+        self.assertIs(rule_graph._node_blockage_rules, cached_rules)
+
         split_router = router_class.__new__(router_class)
         split_router.horiz_lpp = fixed_blockage.lpp
         split_router.vert_lpp = other_layer.lpp
