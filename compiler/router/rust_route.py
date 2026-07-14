@@ -163,7 +163,9 @@ def supply_route(self, vdd_name="vdd", gnd_name="gnd"):
         self.add_side_pin(vdd_name)
         self.add_side_pin(gnd_name)
     elif self.pin_type == "ring":
-        _ring_route_unsupported()
+        sink = lambda s: ctx.store.append_blockage(ctx.convert(s))
+        self.add_ring_pin(vdd_name, blockage_sink=sink)
+        self.add_ring_pin(gnd_name, blockage_sink=sink)
     else:
         debug.warning("Side supply pins aren't created.")
 
@@ -228,8 +230,3 @@ def escape_route(self, pin_names):
         routed_count += 1
         debug.info(2, "Routed {} of {} signal pins".format(routed_count, routed_max))
     self.replace_layout_pins()
-
-
-def _ring_route_unsupported():
-    debug.error("Ring supply routing is not supported by the Rust "
-                "router store yet; set use_rust_router=False.", -1)
