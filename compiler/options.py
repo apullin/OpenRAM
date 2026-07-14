@@ -167,6 +167,8 @@ class options(optparse.Values):
     # Use Nix to initialize the default open-source toolchain.
     # If disabled, OpenRAM uses whatever tools are already in PATH.
     use_nix = True
+    # Use the Rust routing kernel (rust/openram-py) when it is available
+    use_rust_router = True
     # Variable to select the variant of spice
     spice_name = None
     # The spice executable being used which is derived from the user PATH.

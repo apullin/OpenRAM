@@ -70,6 +70,18 @@ class router(router_tech):
         return pins
 
 
+    def make_graph(self):
+        """ Create a routing graph, preferring the Rust backend if enabled. """
+
+        if getattr(OPTS, "use_rust_router", False):
+            from .rust_router import load_openram_rs
+            from .rust_router import rust_graph
+            if load_openram_rs() is not None:
+                return rust_graph(self)
+        from .graph import graph
+        return graph(self)
+
+
     def prepare_gds_reader(self):
         """ Write the current layout to a temporary file to read the layout. """
 
