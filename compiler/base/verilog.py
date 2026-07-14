@@ -163,7 +163,8 @@ class verilog:
         if port in self.write_ports:
             self.vf.write("    din{0}_reg = din{0};\n".format(port))
         if port in self.read_ports:
-            self.vf.write("    #(T_HOLD) dout{0} = {1}'bx;\n".format(port, self.word_size))
+            self.vf.write("    #(T_HOLD) dout{0} = {1}'bx;\n".format(
+                port, self.word_size + self.num_spare_cols))
         if port in self.readwrite_ports:
             self.vf.write("    if ( !csb{0}_reg && web{0}_reg && VERBOSE )\n".format(port))
             self.vf.write("      $display($time,\" Reading %m addr{0}=%b dout{0}=%b\",addr{0}_reg,mem[addr{0}_reg]);\n".format(port))
@@ -228,7 +229,7 @@ class verilog:
                 self.vf.write("        if (wmask{0}_reg[{1}])\n".format(port, mask))
                 self.vf.write("                mem[addr{0}_reg][{1}:{2}] = din{0}_reg[{1}:{2}];\n".format(port, upper, lower))
         else:
-            upper = self.word_size - self.num_spare_cols - 1
+            upper = self.word_size - 1
             self.vf.write("        mem[addr{0}_reg][{1}:0] = din{0}_reg[{1}:0];\n".format(port, upper))
 
         if self.num_spare_cols == 1:

@@ -9,8 +9,9 @@ nominal_corner_only = True
 # Local wordlines have issues with met3 power routing for now
 #local_array_size = 16
 
-route_supplies = "ring"
-#route_supplies = "left"
+route_supplies = True
+supply_pin_type = "ring"
+#supply_pin_type = "left"
 check_lvsdrc = True
 uniquify = True
 #perimeter_pins = False

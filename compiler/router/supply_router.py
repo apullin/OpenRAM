@@ -53,8 +53,23 @@ class supply_router(router):
 
         # Add side pins
         if self.pin_type in ["top", "bottom", "right", "left"]:
-            self.add_side_pin(vdd_name)
-            self.add_side_pin(gnd_name)
+            for pin_name in [vdd_name, gnd_name]:
+                new_shape, fake_pins = self.add_side_pin(pin_name,
+                                                         self.pin_type)
+                ll, ur = new_shape.rect
+                rect = [ll, ur]
+                layer = self.get_layer(self.pin_type in ["left", "right"])
+                new_pin = graph_shape(name=pin_name,
+                                      rect=rect,
+                                      layer_name_pp=layer)
+
+                # The side rail is the exported supply pin.  Distribute fake
+                # targets along it so the MST connects every internal supply
+                # pin to the rail, matching the ring-pin implementation.
+                self.new_pins[pin_name] = [new_pin]
+                self.pins[pin_name].update(fake_pins)
+                self.fake_pins.extend(fake_pins)
+                self.blockages.append(self.inflate_shape(new_pin))
         elif self.pin_type == "ring":
             self.add_ring_pin(vdd_name)
             self.add_ring_pin(gnd_name)

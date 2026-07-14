@@ -82,12 +82,17 @@ cell_properties.bitcell_1port.has_corners = True
 
 cell_properties.bitcell_1port.boundary_layer = "boundary"
 cell_properties.bitcell_1port.port_order = ['bl', 'br', 'wl', 'vdd', 'gnd']
-cell_properties.bitcell_1port.port_types = ["INPUT", "INPUT", "GROUND", "POWER", "OUTPUT"]
+cell_properties.bitcell_1port.port_types = ["OUTPUT", "OUTPUT", "INPUT", "POWER", "GROUND"]
 cell_properties.bitcell_1port.port_map = {'bl': 'BL',
                                           'br': 'BR',
                                           'gnd': 'VGND',
                                           'vdd': 'VPWR',
                                           'wl': 'WL'}
+# The hand-extracted custom cell names its complementary storage node Qbar,
+# not the Q_bar spelling used by the generic bitcell-property default.  Keep
+# this metadata aligned with both the SPICE netlist and the GDS text labels so
+# characterization and PEX probing can find the two internal state nodes.
+cell_properties.bitcell_1port.storage_nets = ['Q', 'Qbar']
                                           
                                           
                                           

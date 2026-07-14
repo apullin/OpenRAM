@@ -6,7 +6,8 @@
 # All rights reserved.
 #
 import collections
-from openram import debug
+import os
+from openram import debug, OPTS
 from openram.tech import drc
 from .vector import vector
 from .design import design
@@ -267,8 +268,12 @@ class channel_route(design):
                     for net in nets:
                         debug.info(0, "{0} pin: {1}".format(net.name, str(net.pins)))
                     if self.parent:
-                        debug.info(0, "Saving vcg.gds")
-                        self.parent.gds_write("vcg.gds")
+                        debug_gds = os.path.join(OPTS.openram_temp, "vcg.gds")
+                        debug.info(0, "Saving {}".format(debug_gds))
+                        try:
+                            self.parent.gds_write(debug_gds)
+                        except Exception as error:
+                            debug.warning("Unable to save cyclic VCG debug GDS: {}".format(error))
                     debug.error("Cyclic VCG in channel router.", -1)
 
                 # Increment the track and reset the offset to the start (like a typewriter)
