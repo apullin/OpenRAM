@@ -135,25 +135,123 @@ def export_design(design):
         rl.set_root(top)
         return rl
 
-    # Same rebuild logic as hierarchy_layout.gds_write
-    if not design.is_library_cell and design.visited:
-        debug.info(3, "Creating layout structure {}".format(design.name))
-        design.gds = gdsMill.VlsiLayout(name=design.name, units=GDS["unit"])
+    # First export: build every structure straight into the Rust layout.
+    # Generated modules are captured through _export_collector (the same
+    # addBox/addText/addInstance calls gds_write_file makes); library
+    # cells keep their file-read gdsMill layouts (plus the pin_map pins
+    # gds_write_file appends to them once) and are converted wholesale.
+    # Structure order replicates the VlsiLayout.addInstance merge: each
+    # module's own structure precedes its children's subtrees, children
+    # in instance order, first encounter wins.
     design.clear_visited()
-    design.gds_write_file(design.gds)
 
-    layout = design.gds
-    rl = getattr(design, "_rust_gds_layout", None)
-    if rl is None:
-        rl = rs.GdsLayout.empty(layout.units[0], layout.units[1])
-        design._rust_gds_layout = rl
+    units = GDS["unit"]
+    rl = rs.GdsLayout.empty(units[0], units[1])
+    design._rust_gds_layout = rl
 
-    root = str(layout.rootStructureName)
+    order = []
+    _order_walk(design, order, set())
+    staging = {}
+    _build_walk(design, staging, units)
+    for sname in order:
+        (boundaries, srefs, texts) = staging[sname]
+        rl.add_structure(sname, boundaries, srefs, texts)
+
+    root = str(design.gds.rootStructureName)
     if root.endswith("\x00"):
         root = root.rstrip("\x00")
-    _export_structures(layout, rl, root)
     rl.set_root(root)
     return rl
+
+
+def _strip_name(name):
+    name = str(name)
+    if name.endswith("\x00"):
+        name = name.rstrip("\x00")
+    return name
+
+
+def _order_walk(mod, order, seen):
+    """ Structure-name order as the gdsMill merge would produce it. """
+    if mod.is_library_cell:
+        # addInstance merges the whole file-read structure dict.
+        for key in mod.gds.structures:
+            n = _strip_name(key)
+            if n not in seen:
+                seen.add(n)
+                order.append(n)
+        return
+    n = str(mod.name)
+    if n in seen:
+        return
+    seen.add(n)
+    order.append(n)
+    for inst in mod.insts:
+        _order_walk(inst.mod, order, seen)
+
+
+def _build_walk(mod, staging, units):
+    """ Post-order structure content build. Children are built (and marked
+    visited) first, so each module's own gds_write_file(collector) call
+    sees visited children and only emits its own elements. """
+    if mod.is_library_cell:
+        n = _strip_name(mod.gds.rootStructureName)
+        if n in staging:
+            return
+        # Appends the module's pin_map pins into its layout once
+        # (visited-guarded), exactly as the full build did.
+        mod.gds_write_file(mod.gds)
+        for key, s in mod.gds.structures.items():
+            sn = _strip_name(key)
+            if sn not in staging:
+                staging[sn] = _convert_structure(s)
+        return
+    n = str(mod.name)
+    if n in staging:
+        return
+    for inst in mod.insts:
+        _build_walk(inst.mod, staging, units)
+    collector = _export_collector(units)
+    mod.gds_write_file(collector)
+    staging[n] = (collector.boundaries, collector.srefs, collector.texts)
+
+
+def _convert_structure(s):
+    """ One gdsMill structure -> (boundaries, srefs, texts) export tuples. """
+    boundaries = []
+    for b in s.boundaries:
+        purpose = b.purposeLayer if isinstance(b.purposeLayer, int) else 0
+        flat = []
+        for c in b.coordinates:
+            flat.append(float(c[0]))
+            flat.append(float(c[1]))
+        boundaries.append((b.drawingLayer, purpose, flat))
+    srefs = []
+    for sref in s.srefs:
+        child = _strip_name(sref.sName)
+        strans = (None if sref.transFlags == ""
+                  else bool(sref.transFlags[0]))
+        mag = None if sref.magFactor in ("", None) else float(sref.magFactor)
+        angle = (None if sref.rotateAngle in ("", None)
+                 else float(sref.rotateAngle))
+        srefs.append((child,
+                      float(sref.coordinates[0]),
+                      float(sref.coordinates[1]),
+                      strans, mag, angle))
+    texts = []
+    for t in s.texts:
+        string = _strip_name(t.textString)
+        purpose = t.purposeLayer if isinstance(t.purposeLayer, int) else 0
+        strans = (None if t.transFlags == ""
+                  else bool(t.transFlags[0]))
+        mag = None if t.magFactor in ("", None) else float(t.magFactor)
+        angle = (None if t.rotateAngle in ("", None)
+                 else float(t.rotateAngle))
+        texts.append((string, t.drawingLayer, purpose,
+                      float(t.coordinates[0][0]),
+                      float(t.coordinates[0][1]),
+                      strans, mag, angle))
+    return (boundaries, srefs, texts)
 
 
 def _export_structures(layout, rl, replace_root):
@@ -161,48 +259,10 @@ def _export_structures(layout, rl, replace_root):
     skipping structures already exported (the root is always resent
     when replace_root names it). """
     for name, s in layout.structures.items():
-        sname = str(name)
-        if sname.endswith("\x00"):
-            sname = sname.rstrip("\x00")
+        sname = _strip_name(name)
         if sname != replace_root and rl.has_structure(sname):
             continue
-        boundaries = []
-        for b in s.boundaries:
-            purpose = b.purposeLayer if isinstance(b.purposeLayer, int) else 0
-            flat = []
-            for c in b.coordinates:
-                flat.append(float(c[0]))
-                flat.append(float(c[1]))
-            boundaries.append((b.drawingLayer, purpose, flat))
-        srefs = []
-        for sref in s.srefs:
-            child = str(sref.sName)
-            if child.endswith("\x00"):
-                child = child.rstrip("\x00")
-            strans = (None if sref.transFlags == ""
-                      else bool(sref.transFlags[0]))
-            mag = None if sref.magFactor in ("", None) else float(sref.magFactor)
-            angle = (None if sref.rotateAngle in ("", None)
-                     else float(sref.rotateAngle))
-            srefs.append((child,
-                          float(sref.coordinates[0]),
-                          float(sref.coordinates[1]),
-                          strans, mag, angle))
-        texts = []
-        for t in s.texts:
-            string = str(t.textString)
-            if string.endswith("\x00"):
-                string = string.rstrip("\x00")
-            purpose = t.purposeLayer if isinstance(t.purposeLayer, int) else 0
-            strans = (None if t.transFlags == ""
-                      else bool(t.transFlags[0]))
-            mag = None if t.magFactor in ("", None) else float(t.magFactor)
-            angle = (None if t.rotateAngle in ("", None)
-                     else float(t.rotateAngle))
-            texts.append((string, t.drawingLayer, purpose,
-                          float(t.coordinates[0][0]),
-                          float(t.coordinates[0][1]),
-                          strans, mag, angle))
+        (boundaries, srefs, texts) = _convert_structure(s)
         rl.add_structure(sname, boundaries, srefs, texts)
 
 
