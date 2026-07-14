@@ -294,11 +294,11 @@ class lib:
         list_values = ", ".join(str(v) for v in values)
         return "\"{0}\"".format(list_values)
 
-    def create_array(self,values, length):
+    def create_array(self,values, length, rounder=round_time):
         """ Helper function to create quoted, line wrapped array with each row of given length """
         # check that the length is a multiple or give an error!
         debug.check(len(values)%length == 0,"Values are not a multiple of the length. Cannot make a full array.")
-        rounded_values = list(map(round_time,values))
+        rounded_values = list(map(rounder,values))
         split_values = [rounded_values[i:i+length] for i in range(0, len(rounded_values), length)]
         formatted_rows = list(map(self.create_list,split_values))
         formatted_array = ",\\\n".join(formatted_rows)
@@ -309,9 +309,9 @@ class lib:
         quoted_string = self.create_list(values)
         self.lib.write("        index_{0}({1});\n".format(number,quoted_string))
 
-    def write_values(self, values, row_length, indent):
+    def write_values(self, values, row_length, indent, rounder=round_time):
         """ Write the index """
-        quoted_string = self.create_array(values, row_length)
+        quoted_string = self.create_array(values, row_length, rounder)
         # indent each newline plus extra spaces for word values
         indented_string = quoted_string.replace('\n', '\n' + indent +"       ")
         self.lib.write("{0}values({1});\n".format(indent,indented_string))
@@ -340,6 +340,14 @@ class lib:
             self.write_index(1,self.slews)
             self.write_index(2,self.slews)
             self.lib.write("    }\n\n")
+
+        self.lib.write("    power_lut_template(POWER_TABLE)")
+        self.lib.write("{\n")
+        self.lib.write("        variable_1 : input_transition_time;\n")
+        self.lib.write("        variable_2 : total_output_net_capacitance;\n")
+        self.write_index(1,self.slews)
+        self.write_index(2,self.loads/1000)
+        self.lib.write("    }\n\n")
 
         # self.lib.write("    lu_table_template(CLK_TRAN) {\n")
         # self.lib.write("        variable_1 : constrained_pin_transition;\n")
@@ -565,58 +573,68 @@ class lib:
         if port in self.write_ports:
             if port in self.read_ports:
                 web_name = " & !web{0}".format(port)
-            write1_power = np.mean(self.char_port_results[port]["write1_power"])
-            write0_power = np.mean(self.char_port_results[port]["write0_power"])
-            self.lib.write("        internal_power(){\n")
-            self.lib.write("            when : \"!csb{0}{1}\"; \n".format(port, web_name))
-            self.lib.write("            rise_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(write1_power))
-            self.lib.write("            }\n")
-            self.lib.write("            fall_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(write0_power))
-            self.lib.write("            }\n")
-            self.lib.write("        }\n")
-
+            self.write_power_group("!csb{0}{1}".format(port, web_name),
+                                   self.char_port_results[port]["write1_power"],
+                                   self.char_port_results[port]["write0_power"])
             # Disabled power.
-            disabled_write1_power = np.mean(self.char_port_results[port]["disabled_write1_power"])
-            disabled_write0_power = np.mean(self.char_port_results[port]["disabled_write0_power"])
-            self.lib.write("        internal_power(){\n")
-            self.lib.write("            when : \"csb{0}{1}\"; \n".format(port, web_name))
-            self.lib.write("            rise_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(disabled_write1_power))
-            self.lib.write("            }\n")
-            self.lib.write("            fall_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(disabled_write0_power))
-            self.lib.write("            }\n")
-            self.lib.write("        }\n")
+            self.write_power_group("csb{0}{1}".format(port, web_name),
+                                   self.char_port_results[port]["disabled_write1_power"],
+                                   self.char_port_results[port]["disabled_write0_power"])
 
         if port in self.read_ports:
             if port in self.write_ports:
                 web_name = " & web{0}".format(port)
-            read1_power = np.mean(self.char_port_results[port]["read1_power"])
-            read0_power = np.mean(self.char_port_results[port]["read0_power"])
-            self.lib.write("        internal_power(){\n")
-            self.lib.write("            when : \"!csb{0}{1}\"; \n".format(port, web_name))
-            self.lib.write("            rise_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(read1_power))
-            self.lib.write("            }\n")
-            self.lib.write("            fall_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(read0_power))
-            self.lib.write("            }\n")
-            self.lib.write("        }\n")
-
+            self.write_power_group("!csb{0}{1}".format(port, web_name),
+                                   self.char_port_results[port]["read1_power"],
+                                   self.char_port_results[port]["read0_power"])
             # Disabled power.
-            disabled_read1_power = np.mean(self.char_port_results[port]["disabled_read1_power"])
-            disabled_read0_power = np.mean(self.char_port_results[port]["disabled_read0_power"])
-            self.lib.write("        internal_power(){\n")
-            self.lib.write("            when : \"csb{0}{1}\"; \n".format(port, web_name))
-            self.lib.write("            rise_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(disabled_read1_power))
-            self.lib.write("            }\n")
-            self.lib.write("            fall_power(scalar){\n")
-            self.lib.write("                values(\"{0:.6e}\");\n".format(disabled_read0_power))
-            self.lib.write("            }\n")
-            self.lib.write("        }\n")
+            self.write_power_group("csb{0}{1}".format(port, web_name),
+                                   self.char_port_results[port]["disabled_read1_power"],
+                                   self.char_port_results[port]["disabled_read0_power"])
+
+    def write_power_group(self, when_condition, rise_values, fall_values):
+        """
+        Write one internal_power group. Preserve the full slew x load power
+        table when the characterizer measured one point per table entry;
+        otherwise fall back to the historical scalar mean.
+        """
+
+        table_size = len(self.slews) * len(self.loads)
+        self.lib.write("        internal_power(){\n")
+        self.lib.write("            when : \"{0}\"; \n".format(when_condition))
+        for direction, values in (("rise", rise_values), ("fall", fall_values)):
+            self.check_power_spread(when_condition, direction, values)
+            if len(values) == table_size:
+                self.lib.write("            {0}_power(POWER_TABLE){{\n".format(direction))
+                # Keep 6 significant digits (round_time is too coarse for
+                # small power values).
+                self.write_values(list(values), len(self.loads), "            ",
+                                  rounder=lambda v: float("{0:.6e}".format(v)))
+                self.lib.write("            }\n")
+            else:
+                self.lib.write("            {0}_power(scalar){{\n".format(direction))
+                self.lib.write("                values(\"{0:.6e}\");\n".format(np.mean(values)))
+                self.lib.write("            }\n")
+        self.lib.write("        }\n")
+
+    def check_power_spread(self, when_condition, direction, values):
+        """
+        Range-check the raw power points: negative points or a large spread
+        across the slew/load sweep usually indicate a broken measurement.
+        """
+
+        if len(values) == 0:
+            return
+        low = min(values)
+        high = max(values)
+        if low < 0:
+            debug.warning("Negative {0} power value {1} for '{2}'.".format(
+                direction, low, when_condition))
+        mean = np.mean(values)
+        if mean > 0 and (high - low) > mean:
+            debug.warning("Power spread for '{0}' {1} exceeds its mean: "
+                          "min={2:.6e} max={3:.6e} mean={4:.6e}.".format(
+                              when_condition, direction, low, high, mean))
 
     def write_pg_pin(self):
         self.lib.write("    pg_pin({0}) ".format(self.vdd_name) + "{\n")
