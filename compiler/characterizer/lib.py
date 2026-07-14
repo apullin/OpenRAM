@@ -105,32 +105,37 @@ class lib:
         self.lib_files = []
 
         if OPTS.use_specified_corners == None:
-            # Nominal corner
-            corner_tuples = set()
+            # Generated corners retain this order while membership tracking
+            # prevents duplicate nominal/min/max entries.
+            corner_tuples = []
+            seen_corners = set()
+
+            def append_corner(corner):
+                if corner not in seen_corners:
+                    seen_corners.add(corner)
+                    corner_tuples.append(corner)
+
             if OPTS.only_use_config_corners:
                 if OPTS.nominal_corner_only:
                     debug.warning("Nominal corner only option ignored if use only config corners is set.")
-                # Generate a powerset of input PVT lists
+                # Generate the Cartesian product of the configured PVT lists.
                 for p in self.process_corners:
                     for v in self.supply_voltages:
                         for t in self.temperatures:
-                            corner_tuples.add((p, v, t))
+                            append_corner((p, v, t))
             else:
                 nom_corner = (nom_process, nom_supply, nom_temperature)
-                corner_tuples.add(nom_corner)
+                append_corner(nom_corner)
                 if not OPTS.nominal_corner_only:
                     # Temperature corners
-                    corner_tuples.add((nom_process, nom_supply, min_temperature))
-                    corner_tuples.add((nom_process, nom_supply, max_temperature))
+                    append_corner((nom_process, nom_supply, min_temperature))
+                    append_corner((nom_process, nom_supply, max_temperature))
                     # Supply corners
-                    corner_tuples.add((nom_process, min_supply, nom_temperature))
-                    corner_tuples.add((nom_process, max_supply, nom_temperature))
+                    append_corner((nom_process, min_supply, nom_temperature))
+                    append_corner((nom_process, max_supply, nom_temperature))
                     # Process corners
-                    corner_tuples.add((min_process, nom_supply, nom_temperature))
-                    corner_tuples.add((max_process, nom_supply, nom_temperature))
-            # Enforce that nominal corner is the first to be characterized
-            self.add_corner(*nom_corner)
-            corner_tuples.remove(nom_corner)
+                    append_corner((min_process, nom_supply, nom_temperature))
+                    append_corner((max_process, nom_supply, nom_temperature))
         else:
             corner_tuples = OPTS.use_specified_corners
 
@@ -670,14 +675,12 @@ class lib:
 
 
     def compute_setup_hold(self):
-        """ Do the analysis if we haven't characterized a FF yet """
-        # Do the analysis if we haven't characterized a FF yet
-        if not hasattr(self,"sh"):
-            self.sh = setup_hold(self.corner)
-            if self.use_model:
-                self.times = self.sh.analytical_setuphold(self.slews,self.slews)
-            else:
-                self.times = self.sh.analyze(self.slews,self.slews)
+        """Do setup/hold analysis for the current characterization corner."""
+        self.sh = setup_hold(self.corner)
+        if self.use_model:
+            self.times = self.sh.analytical_setuphold(self.slews,self.slews)
+        else:
+            self.times = self.sh.analyze(self.slews,self.slews)
 
 
     def parse_info(self,corner,lib_name, is_first_corner, time):
