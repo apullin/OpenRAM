@@ -210,18 +210,8 @@ def write_drc_script(cell_name, gds_name, extract, final_verification, output_pa
     os.system("chmod u+x {}".format(run_file))
 
 
-def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=False):
-    """Run DRC check on a cell which is implemented in gds_name."""
-
-    global num_drc_runs
-    num_drc_runs += 1
-
-    write_drc_script(cell_name, gds_name, extract, final_verification, OPTS.openram_temp, sp_name=sp_name)
-
-    (outfile, errfile, resultsfile) = run_script(cell_name, "ext")
-
-    (outfile, errfile, resultsfile) = run_script(cell_name, "drc")
-
+def _parse_drc_results(cell_name, outfile):
+    """ Parse the Magic DRC output for the error count. """
     # Check the result for these lines in the summary:
     # Total DRC errors found: 0
     # The count is shown in this format:
@@ -256,6 +246,46 @@ def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=
         debug.info(1, result_str)
 
     return errors
+
+
+def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=False):
+    """Run DRC check on a cell which is implemented in gds_name."""
+
+    global num_drc_runs
+    num_drc_runs += 1
+
+    write_drc_script(cell_name, gds_name, extract, final_verification, OPTS.openram_temp, sp_name=sp_name)
+
+    (outfile, errfile, resultsfile) = run_script(cell_name, "ext")
+
+    (outfile, errfile, resultsfile) = run_script(cell_name, "drc")
+
+    return _parse_drc_results(cell_name, outfile)
+
+
+def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
+    """Run DRC and LVS together: one GDS read/extraction, then the Magic
+    DRC and Netgen LVS scripts concurrently (DRC needs the written .mag
+    view, LVS needs the extracted .spice; they are independent). """
+
+    global num_drc_runs
+    global num_lvs_runs
+    num_drc_runs += 1
+    num_lvs_runs += 1
+
+    write_drc_script(cell_name, gds_name, True, final_verification, OPTS.openram_temp, sp_name=sp_name)
+    write_lvs_script(cell_name, gds_name, sp_name, final_verification)
+
+    run_script(cell_name, "ext")
+
+    drc_handle = start_script(cell_name, "drc")
+    lvs_handle = start_script(cell_name, "lvs")
+    (drc_outfile, drc_errfile, drc_resultsfile) = wait_script(drc_handle)
+    (lvs_outfile, lvs_errfile, lvs_resultsfile) = wait_script(lvs_handle)
+
+    drc_errors = _parse_drc_results(cell_name, drc_outfile)
+    lvs_errors = _parse_lvs_results(cell_name, lvs_resultsfile)
+    return (drc_errors, lvs_errors)
 
 
 def write_lvs_script(cell_name, gds_name, sp_name, final_verification=False, output_path=None):
@@ -315,6 +345,12 @@ def run_lvs(cell_name, gds_name, sp_name, final_verification=False, output_path=
     write_lvs_script(cell_name, gds_name, sp_name, final_verification)
 
     (outfile, errfile, resultsfile) = run_script(cell_name, "lvs")
+
+    return _parse_lvs_results(cell_name, resultsfile)
+
+
+def _parse_lvs_results(cell_name, resultsfile):
+    """ Parse the Netgen LVS report for the error count. """
 
     total_errors = 0
 

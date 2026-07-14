@@ -83,3 +83,19 @@ else:
 #         from .magic import filter_gds
 #     else:
 #         debug.warning("Did not find Magic.")
+
+
+def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
+    """ Run DRC and LVS on a cell. With the Magic/Netgen backends the GDS
+    read and extraction are shared and the two checks run concurrently;
+    other backends fall back to running them in sequence. """
+    if (OPTS.drc_exe and OPTS.drc_exe[0] == "magic"
+            and OPTS.lvs_exe and OPTS.lvs_exe[0] == "netgen"):
+        from .magic import run_drc_lvs as _magic_run_drc_lvs
+        return _magic_run_drc_lvs(cell_name, gds_name, sp_name,
+                                  final_verification)
+    drc_errors = run_drc(cell_name, gds_name, sp_name, extract=True,
+                         final_verification=final_verification)
+    lvs_errors = run_lvs(cell_name, gds_name, sp_name,
+                         final_verification=final_verification)
+    return (drc_errors, lvs_errors)
