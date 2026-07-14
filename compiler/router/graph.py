@@ -85,8 +85,12 @@ class graph:
         pur_x = max(p1x, p2x)
         pur_y = max(p1y, p2y)
         probe_lpp = self.router.get_lpp(p1.z)
+        blockage_tree = self.blockage_bbox_trees[p1.z]
+        if blockage_tree is None:
+            return False
+
         # Check if any blockage blocks this probe
-        for blockage in self.blockage_bbox_tree.iterate_rect(
+        for blockage in blockage_tree.iterate_rect(
                 pll_x, pll_y, pur_x, pur_y):
             # Not on the same layer
             if not blockage.same_lpp(blockage.lpp, probe_lpp):
@@ -110,6 +114,9 @@ class graph:
         x = p.x
         y = p.y
         z = p.z
+        blockage_tree = self.blockage_bbox_trees[z]
+        if blockage_tree is None:
+            return False
 
         def closest(value, checklist):
             """ Return the distance of the closest value in the checklist. """
@@ -120,7 +127,7 @@ class graph:
         half_wide = self.router.half_wire
         spacing = snap(self.router.track_space + half_wide + drc["grid"])
         blocked = False
-        for blockage in self.blockage_bbox_tree.iterate_point(p):
+        for blockage in blockage_tree.iterate_point(p):
             ll, ur = blockage.rect
             # Not on the same layer
             if self.router.get_zindex(blockage.lpp) != z:
@@ -274,8 +281,16 @@ class graph:
     def build_bbox_trees(self):
         """ Build bbox trees for blockages and vias in the routing region. """
 
-        blockage_boxes = [bbox(shape) for shape in self.graph_blockages]
-        self.blockage_bbox_tree = bbox_node.build(blockage_boxes)
+        route_lpps = [self.router.get_lpp(z) for z in range(2)]
+        blockage_boxes = [[], []]
+        for shape in self.graph_blockages:
+            shape_z = self.router.get_zindex(shape.lpp)
+            for z, route_lpp in enumerate(route_lpps):
+                if (shape_z == z or
+                        self.router.same_lpp(shape.lpp, route_lpp)):
+                    blockage_boxes[z].append(bbox(shape))
+        self.blockage_bbox_trees = [bbox_node.build(boxes)
+                                    for boxes in blockage_boxes]
         if self.graph_vias:
             via_boxes = [bbox(shape) for shape in self.graph_vias]
             self.via_bbox_tree = bbox_node.build(via_boxes)

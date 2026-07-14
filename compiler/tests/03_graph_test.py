@@ -142,11 +142,13 @@ class graph_test(openram_test):
         probe_graph = graph(probe_router)
         probe_graph.source = source
         probe_tree = recording_tree()
-        probe_graph.blockage_bbox_tree = probe_tree
+        other_probe_tree = recording_tree()
+        probe_graph.blockage_bbox_trees = [probe_tree, other_probe_tree]
         probe_p1 = SimpleNamespace(x=4, y=3, z=0)
         probe_p2 = SimpleNamespace(x=1, y=3, z=0)
         self.assertFalse(probe_graph.is_probe_blocked(probe_p1, probe_p2))
         self.assertEqual(probe_tree.bounds, [(1, 3, 4, 3)])
+        self.assertEqual(other_probe_tree.bounds, [])
 
         other_layer = shape("blocked", (2, 2), (3, 4), "m2")
         probe_tree.blockages = [other_layer]
@@ -167,6 +169,42 @@ class graph_test(openram_test):
             source.name, [vector(0, 2), vector(5, 4)], "m1", core_hit)
         probe_tree.blockages = [inflated_hit]
         self.assertFalse(probe_graph.is_probe_blocked(probe_p1, probe_p2))
+
+        split_router = router_class.__new__(router_class)
+        split_router.horiz_lpp = fixed_blockage.lpp
+        split_router.vert_lpp = other_layer.lpp
+        split_graph = graph(split_router)
+        split_graph.graph_blockages = [fixed_blockage, other_layer]
+        split_graph.graph_vias = []
+        split_graph.build_bbox_trees()
+        split_point = vector(2.5, 3)
+        self.assertEqual(
+            list(split_graph.blockage_bbox_trees[0].iterate_point(
+                split_point)),
+            [fixed_blockage])
+        self.assertEqual(
+            list(split_graph.blockage_bbox_trees[1].iterate_point(
+                split_point)),
+            [other_layer])
+
+        split_graph.graph_blockages = [fixed_blockage]
+        split_graph.build_bbox_trees()
+        self.assertIsNone(split_graph.blockage_bbox_trees[1])
+        probe_z1_p1 = SimpleNamespace(x=4, y=3, z=1)
+        probe_z1_p2 = SimpleNamespace(x=1, y=3, z=1)
+        self.assertFalse(split_graph.is_probe_blocked(
+            probe_z1_p1, probe_z1_p2))
+
+        one_layer_router = router_class.__new__(router_class)
+        one_layer_router.horiz_lpp = fixed_blockage.lpp
+        one_layer_router.vert_lpp = fixed_blockage.lpp
+        one_layer_graph = graph(one_layer_router)
+        one_layer_graph.source = source
+        one_layer_graph.graph_blockages = [fixed_blockage]
+        one_layer_graph.graph_vias = []
+        one_layer_graph.build_bbox_trees()
+        self.assertTrue(one_layer_graph.is_probe_blocked(
+            probe_z1_p1, probe_z1_p2))
 
         via_nodes = [graph_node((0, 0, 0)), graph_node((0, 0, 1))]
         route_graph.graph_vias = []
