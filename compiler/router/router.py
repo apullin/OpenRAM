@@ -116,6 +116,12 @@ class router(router_tech):
         debug.info(4, "Finding blockages...")
 
         for lpp in [self.vert_lpp, self.horiz_lpp]:
+            layer_pins = [pin for pin in self.all_pins
+                          if pin.lpp[0] == lpp[0]]
+            layer_blockages = [shape for shape in self.blockages
+                               if shape.lpp[0] == lpp[0]]
+            original_ids = {id(shape) for shape in layer_blockages}
+            added_shapes = []
             # If the list of shapes is given, don't get them from gdsMill
             if shape_list is None:
                 shapes = self.layout.getAllShapes(lpp)
@@ -136,12 +142,23 @@ class router(router_tech):
                 new_shape = self.inflate_shape(new_shape)
                 # Skip this blockage if it's contained by a pin or an existing
                 # blockage
-                if new_shape.core_contained_by_any(self.all_pins) or \
-                   new_shape.core_contained_by_any(self.blockages):
+                if new_shape.core_contained_by_any(layer_pins) or \
+                   new_shape.core_contained_by_any(layer_blockages):
                     continue
                 # Merge previous blockages into this one if possible
-                self.merge_shapes(new_shape, self.blockages)
-                self.blockages.append(new_shape)
+                self.merge_shapes(new_shape, layer_blockages)
+                layer_blockages.append(new_shape)
+                added_shapes.append(new_shape)
+
+            if not added_shapes:
+                continue
+            survivor_ids = {id(shape) for shape in layer_blockages}
+            self.blockages[:] = [
+                shape for shape in self.blockages
+                if id(shape) not in original_ids or id(shape) in survivor_ids
+            ]
+            self.blockages.extend(shape for shape in added_shapes
+                                   if id(shape) in survivor_ids)
 
 
     def find_vias(self, shape_list=None):

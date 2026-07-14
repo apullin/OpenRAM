@@ -25,16 +25,17 @@ class graph_test(openram_test):
 
         from openram.base.vector import vector
         from openram.router.graph import graph
+        from openram.router.router import router as router_class
         from openram.router.graph_shape import graph_shape
         from openram.router.graph_node import graph_node
         from openram.router.bbox import bbox as router_bbox
         from openram.router.bbox_node import bbox_node
         from openram.router import graph_utils
 
-        def shape(name, ll, ur):
+        def shape(name, ll, ur, layer="m1"):
             return graph_shape(name,
                                [vector(*ll), vector(*ur)],
-                               "m1")
+                               layer)
 
         first = shape("first", (1, 1), (2, 2))
         duplicate = shape("duplicate", (1, 1), (2, 2))
@@ -105,6 +106,55 @@ class graph_test(openram_test):
                           side_effect=AssertionError("nodes already checked")):
             self.assertFalse(route_graph.is_via_blocked(
                 via_nodes, check_blockages=False))
+
+        blockage_router = router_class.__new__(router_class)
+        m1_absorb = shape("m1_absorb", (0, 0), (2, 1))
+        m2_absorb = shape("m2_absorb", (10, 0), (11, 1), "m2")
+        m1_keep = shape("m1_keep", (20, 0), (24, 1))
+        m2_keep = shape("m2_keep", (30, 0), (31, 1), "m2")
+        blockage_router.vert_lpp = m1_absorb.lpp
+        blockage_router.horiz_lpp = m2_absorb.lpp
+        blockage_router.inflate_shape = lambda item: item
+        blockage_router.all_pins = {
+            shape("m1_pin", (40, 0), (44, 1))
+        }
+        blockage_router.blockages = [m1_absorb, m2_absorb,
+                                     m1_keep, m2_keep]
+        new_blockages = [
+            shape("boundary", (12, 0), (14, 1), "m2"),
+            shape("boundary", (2, 0), (4, 1)),
+            shape("boundary", (11, 0), (12, 1), "m2"),
+            shape("boundary", (4, 0), (6, 1)),
+            shape("boundary", (41, 0), (42, 1)),
+            shape("boundary", (21, 0), (22, 1)),
+        ]
+        blockage_router.find_blockages("route", new_blockages)
+        self.assertIs(blockage_router.blockages[0], m1_keep)
+        self.assertIs(blockage_router.blockages[1], m2_keep)
+
+        def blockage_signature(items):
+            return [(item.layer, item.ll().x, item.by(),
+                     item.rx(), item.uy()) for item in items]
+
+        self.assertEqual(blockage_signature(blockage_router.blockages), [
+            ("m1", 20, 0, 24, 1),
+            ("m2", 30, 0, 31, 1),
+            ("m1", 0, 0, 6, 1),
+            ("m2", 10, 0, 14, 1),
+        ])
+        surviving_m2_route = blockage_router.blockages[-1]
+        blockage_router.find_blockages(
+            "route", [shape("boundary", (6, 0), (8, 1))])
+        self.assertIs(blockage_router.blockages[0], m1_keep)
+        self.assertIs(blockage_router.blockages[1], m2_keep)
+        self.assertIs(blockage_router.blockages[2], surviving_m2_route)
+        self.assertEqual(blockage_signature(blockage_router.blockages), [
+            ("m1", 20, 0, 24, 1),
+            ("m2", 30, 0, 31, 1),
+            ("m2", 10, 0, 14, 1),
+            ("m1", 0, 0, 8, 1),
+        ])
+
 
         class containment_shape(graph_shape):
             def __eq__(self, _other):
