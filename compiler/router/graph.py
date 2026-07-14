@@ -128,11 +128,6 @@ class graph:
         else:
             wide, half_wide, spacing = rules
 
-        def closest(value, checklist):
-            """ Return the distance of the closest value in the checklist. """
-            diffs = [abs(value - other) for other in checklist]
-            return snap(min(diffs))
-
         blocked = False
         for blockage in blockage_tree.iterate_point(p):
             # Not on the same layer
@@ -149,24 +144,34 @@ class graph:
                 blocked = True
                 continue
             # Check if the node is too close to one edge of the shape
-            lengths = [blockage.width(), blockage.height()]
-            centers = blockage.center()
+            width = blockage.width()
+            height = blockage.height()
+            center = blockage.center()
             ll, ur = blockage.rect
-            safe = [True, True]
-            for i in range(2):
-                if lengths[i] >= wide:
-                    min_diff = closest(p[i], [ll[i], ur[i]])
-                    if min_diff < half_wide:
-                        safe[i] = False
-                elif centers[i] != p[i]:
-                    safe[i] = False
-            if not all(safe):
+            if width >= wide:
+                safe_x = (snap(min(abs(x - ll.x), abs(x - ur.x))) >=
+                          half_wide)
+            else:
+                safe_x = center.x == x
+            if height >= wide:
+                safe_y = (snap(min(abs(y - ll.y), abs(y - ur.y))) >=
+                          half_wide)
+            else:
+                safe_y = center.y == y
+            if not safe_x or not safe_y:
                 blocked = True
                 continue
+
             # Check if the node is in a safe region of the shape
             xs, ys = self.get_safe_pin_values(blockage)
-            xdiff = closest(p.x, xs)
-            ydiff = closest(p.y, ys)
+            xdiff = abs(x - xs[0])
+            if len(xs) > 1:
+                xdiff = min(xdiff, abs(x - xs[1]))
+            xdiff = snap(xdiff)
+            ydiff = abs(y - ys[0])
+            if len(ys) > 1:
+                ydiff = min(ydiff, abs(y - ys[1]))
+            ydiff = snap(ydiff)
             if xdiff == 0 and ydiff == 0:
                 if blockage in [self.source, self.target]:
                     return False

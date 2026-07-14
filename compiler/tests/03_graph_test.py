@@ -277,6 +277,104 @@ class graph_test(openram_test):
         self.assertFalse(rule_graph.is_node_blocked(rule_node))
         self.assertIs(rule_graph._node_blockage_rules, cached_rules)
 
+        class filtering_point_tree:
+            def __init__(self, blockages):
+                self.blockages = blockages
+
+            def iterate_point(self, point):
+                for item in self.blockages:
+                    ll, ur = item.rect
+                    if (ll.x <= point.x <= ur.x and
+                            ll.y <= point.y <= ur.y):
+                        yield item
+
+        def legacy_node_blocked(test_graph, node):
+            point = node.center
+            x, y, z = point.x, point.y, point.z
+            tree = test_graph.blockage_bbox_trees[z]
+            if tree is None:
+                return False
+
+            def closest(value, values):
+                return graph_utils.snap(min(
+                    abs(value - other) for other in values))
+
+            wide = test_graph.router.track_wire
+            half_wide = test_graph.router.half_wire
+            spacing = graph_utils.snap(
+                test_graph.router.track_space + half_wide +
+                graph_utils.tech.drc["grid"])
+            blocked = False
+            for blockage in tree.iterate_point(point):
+                if test_graph.router.get_zindex(blockage.lpp) != z:
+                    continue
+                if not test_graph.is_routable(blockage):
+                    blocked = True
+                    continue
+                blockage = blockage.get_core()
+                ll, ur = blockage.rect
+                if ll.x > x or x > ur.x or ll.y > y or y > ur.y:
+                    blocked = True
+                    continue
+                lengths = [blockage.width(), blockage.height()]
+                centers = blockage.center()
+                ll, ur = blockage.rect
+                safe = [True, True]
+                for axis in range(2):
+                    if lengths[axis] >= wide:
+                        if closest(
+                                point[axis], [ll[axis], ur[axis]]) < half_wide:
+                            safe[axis] = False
+                    elif centers[axis] != point[axis]:
+                        safe[axis] = False
+                if not all(safe):
+                    blocked = True
+                    continue
+                xs, ys = test_graph.get_safe_pin_values(blockage)
+                xdiff = closest(x, xs)
+                ydiff = closest(y, ys)
+                if xdiff == 0 and ydiff == 0:
+                    if blockage in [test_graph.source, test_graph.target]:
+                        return False
+                elif xdiff < spacing and ydiff < spacing:
+                    blocked = True
+            return blocked
+
+        node_source = shape("node_source", (0, 0), (4, 4))
+        inflated_source = graph_shape(
+            "node_source", [vector(-1, -1), vector(5, 5)],
+            "m1", node_source)
+        node_target = shape("node_target", (20, 20), (24, 24))
+        fixed_node_blockage = shape("node_blocked", (-2, -2), (6, 6))
+        other_node_layer = shape("node_other", (-2, -2), (6, 6), "m2")
+        narrow_source = shape("narrow_source", (0, 0), (1, 4))
+        wide_source = shape("wide_source", (0, 0), (10, 10))
+        node_cases = [
+            (node_source, [other_node_layer], [(2, 2)]),
+            (node_source, [fixed_node_blockage], [(2, 2)]),
+            (node_source, [fixed_node_blockage, inflated_source], [(2, 2)]),
+            (node_source, [inflated_source],
+             [(2, 2), (4.5, 2), (0.995, 2), (1, 2)]),
+            (narrow_source, [narrow_source], [(0.5, 2), (0.6, 2)]),
+            (wide_source, [wide_source], [(1, 1), (2, 2), (9, 9)]),
+        ]
+        for test_source, blockages, points in node_cases:
+            test_router = SimpleNamespace(
+                track_wire=2, half_wire=1, track_space=1,
+                get_zindex=lambda lpp, m1_lpp=test_source.lpp:
+                    int(lpp[0] != m1_lpp[0]))
+            test_graph = graph(test_router)
+            test_graph.source = test_source
+            test_graph.target = node_target
+            test_graph.blockage_bbox_trees = [
+                filtering_point_tree(blockages), None]
+            for px, py in points:
+                test_node = graph_node((px, py, 0))
+                self.assertEqual(
+                    test_graph.is_node_blocked(test_node),
+                    legacy_node_blocked(test_graph, test_node))
+
+
         split_router = router_class.__new__(router_class)
         split_router.horiz_lpp = fixed_blockage.lpp
         split_router.vert_lpp = other_layer.lpp
