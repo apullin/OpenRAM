@@ -355,29 +355,80 @@ class graph:
         # Mark nodes that will be removed
         self.mark_blocked_nodes()
 
-        # Connect closest nodes that won't be removed
-        def search(index, condition, shift):
-            """ Search and connect neighbor nodes. """
-            base_nodes = self.nodes[index:index+2]
-            found = [base_nodes[0].remove,
-                     base_nodes[1].remove]
-            while condition(index) and not all(found):
-                nodes = self.nodes[index - shift:index - shift + 2]
-                for k in range(2):
-                    if not found[k] and not nodes[k].remove:
-                        found[k] = True
-                        if not self.is_probe_blocked(base_nodes[k].center, nodes[k].center):
-                            base_nodes[k].add_neighbor(nodes[k])
-                index -= shift
+        # Connect the nearest live nodes without rescanning prior grid points.
+        nodes = self.nodes
         y_len = len(y_values)
-        for i in range(0, len(self.nodes), 2):
-            search(i, lambda count: (count / 2) % y_len, 2) # Down
-            search(i, lambda count: (count / 2) >= y_len, y_len * 2) # Left
-            if not self.nodes[i].remove and \
-               not self.nodes[i + 1].remove and \
-               not self.is_via_blocked(self.nodes[i:i+2],
-                                       check_blockages=False):
-                self.nodes[i].add_neighbor(self.nodes[i + 1])
+        previous_x = [[None, None] for _ in range(y_len)]
+        previous_x_positions = [[-1, -1] for _ in range(y_len)]
+        for x_index in range(len(x_values)):
+            previous_y = [None, None]
+            previous_y_positions = [-1, -1]
+            x_offset = x_index * y_len * 2
+            for y_index in range(y_len):
+                i = x_offset + y_index * 2
+                base0 = nodes[i]
+                base1 = nodes[i + 1]
+
+                down0 = previous_y[0] if not base0.remove else None
+                down1 = previous_y[1] if not base1.remove else None
+                if previous_y_positions[0] >= previous_y_positions[1]:
+                    if (down0 is not None and
+                            not self.is_probe_blocked(
+                                base0.center, down0.center)):
+                        base0.add_neighbor(down0)
+                    if (down1 is not None and
+                            not self.is_probe_blocked(
+                                base1.center, down1.center)):
+                        base1.add_neighbor(down1)
+                else:
+                    if (down1 is not None and
+                            not self.is_probe_blocked(
+                                base1.center, down1.center)):
+                        base1.add_neighbor(down1)
+                    if (down0 is not None and
+                            not self.is_probe_blocked(
+                                base0.center, down0.center)):
+                        base0.add_neighbor(down0)
+
+                left0 = (previous_x[y_index][0]
+                         if not base0.remove else None)
+                left1 = (previous_x[y_index][1]
+                         if not base1.remove else None)
+                positions = previous_x_positions[y_index]
+                if positions[0] >= positions[1]:
+                    if (left0 is not None and
+                            not self.is_probe_blocked(
+                                base0.center, left0.center)):
+                        base0.add_neighbor(left0)
+                    if (left1 is not None and
+                            not self.is_probe_blocked(
+                                base1.center, left1.center)):
+                        base1.add_neighbor(left1)
+                else:
+                    if (left1 is not None and
+                            not self.is_probe_blocked(
+                                base1.center, left1.center)):
+                        base1.add_neighbor(left1)
+                    if (left0 is not None and
+                            not self.is_probe_blocked(
+                                base0.center, left0.center)):
+                        base0.add_neighbor(left0)
+
+                if not base0.remove:
+                    previous_y[0] = base0
+                    previous_y_positions[0] = y_index
+                    previous_x[y_index][0] = base0
+                    positions[0] = x_index
+                if not base1.remove:
+                    previous_y[1] = base1
+                    previous_y_positions[1] = y_index
+                    previous_x[y_index][1] = base1
+                    positions[1] = x_index
+
+                if (not base0.remove and not base1.remove and
+                        not self.is_via_blocked(
+                            (base0, base1), check_blockages=False)):
+                    base0.add_neighbor(base1)
 
         # Remove marked nodes
         self.remove_blocked_nodes()

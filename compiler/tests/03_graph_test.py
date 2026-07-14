@@ -86,6 +86,95 @@ class graph_test(openram_test):
         self.assertNotIn(removed, left.neighbors)
         self.assertNotIn(removed, right.neighbors)
 
+        def center_tuple(node):
+            center = node.center
+            return (center.x, center.y, center.z)
+
+        removed_centers = {
+            (0, 1, 0), (1, 0, 1), (1, 1, 0), (2, 1, 1),
+        }
+        blocked_edges = {
+            frozenset(((0, 2, 1), (0, 1, 1))),
+            frozenset(((2, 2, 0), (1, 2, 0))),
+        }
+        blocked_vias = {(2, 2)}
+
+        def run_node_generator(x_values, y_values, legacy=False):
+            test_graph = graph(SimpleNamespace())
+            probe_calls = []
+            via_calls = []
+
+            test_graph.is_node_blocked = lambda node: (
+                center_tuple(node) in removed_centers)
+
+            def probe_blocked(p1, p2):
+                p1_key = (p1.x, p1.y, p1.z)
+                p2_key = (p2.x, p2.y, p2.z)
+                probe_calls.append((p1_key, p2_key))
+                return frozenset((p1_key, p2_key)) in blocked_edges
+
+            def via_blocked(nodes, check_blockages=True):
+                centers = tuple(center_tuple(node) for node in nodes)
+                via_calls.append((centers, check_blockages))
+                return centers[0][:2] in blocked_vias
+
+            test_graph.is_probe_blocked = probe_blocked
+            test_graph.is_via_blocked = via_blocked
+
+            if legacy:
+                test_graph.nodes = [
+                    graph_node((x, y, z))
+                    for x in x_values for y in y_values for z in (0, 1)
+                ]
+                test_graph.mark_blocked_nodes()
+
+                def search(index, condition, shift):
+                    base_nodes = test_graph.nodes[index:index + 2]
+                    found = [base_nodes[0].remove, base_nodes[1].remove]
+                    while condition(index) and not all(found):
+                        nodes = test_graph.nodes[
+                            index - shift:index - shift + 2]
+                        for z in range(2):
+                            if not found[z] and not nodes[z].remove:
+                                found[z] = True
+                                if not probe_blocked(
+                                        base_nodes[z].center, nodes[z].center):
+                                    base_nodes[z].add_neighbor(nodes[z])
+                        index -= shift
+
+                y_len = len(y_values)
+                for i in range(0, len(test_graph.nodes), 2):
+                    search(i, lambda count: (count / 2) % y_len, 2)
+                    search(i, lambda count: (count / 2) >= y_len,
+                           y_len * 2)
+                    nodes = test_graph.nodes[i:i + 2]
+                    if (not nodes[0].remove and not nodes[1].remove and
+                            not via_blocked(nodes, check_blockages=False)):
+                        nodes[0].add_neighbor(nodes[1])
+                test_graph.remove_blocked_nodes()
+            else:
+                test_graph.generate_graph_nodes(x_values, y_values)
+
+            signature = [
+                (center_tuple(node),
+                 [center_tuple(neighbor) for neighbor in node.neighbors])
+                for node in test_graph.nodes
+            ]
+            return signature, probe_calls, via_calls
+
+        graph_cases = [
+            ([0], [0]),
+            ([0], [0, 1, 2, 3]),
+            ([0, 1, 2, 3], [0]),
+            ([0, 1, 2], [0, 1, 2]),
+            ([], [0]),
+            ([0], []),
+        ]
+        for x_values, y_values in graph_cases:
+            self.assertEqual(
+                run_node_generator(x_values, y_values),
+                run_node_generator(x_values, y_values, legacy=True))
+
         heuristic_targets = [graph_node((-1, 4, 0)),
                              graph_node((5, -2, 1))]
         heuristic = graph._make_heuristic(heuristic_targets)
