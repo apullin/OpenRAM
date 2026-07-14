@@ -21,7 +21,8 @@ class port_data(design):
     When RBLs present: port 0 always has the RBL on the left while port 1 is on the right.
     """
 
-    def __init__(self, sram_config, port, has_rbl, num_spare_cols=None, bit_offsets=None, name="",):
+    def __init__(self, sram_config, port, has_rbl, num_spare_cols=None,
+                 num_filler_cols=0, bit_offsets=None, name="",):
 
         sram_config.set_local_config(self)
         self.port = port
@@ -35,6 +36,7 @@ class port_data(design):
                 self.num_spare_cols = num_spare_cols + self.num_spare_cols
         if self.num_spare_cols is None:
             self.num_spare_cols = 0
+        self.num_filler_cols = num_filler_cols
         if not bit_offsets:
             bitcell = factory.create(module_type=OPTS.bitcell)
             if(cell_properties.use_strap == True and OPTS.num_ports == 1):
@@ -43,7 +45,7 @@ class port_data(design):
             else:
                 precharge_width = bitcell.width
             self.bit_offsets = []
-            for i in range(self.num_cols + self.num_spare_cols):
+            for i in range(self.num_cols + self.num_spare_cols + self.num_filler_cols):
                 self.bit_offsets.append(i * precharge_width)
         else:
             self.bit_offsets = bit_offsets
@@ -125,6 +127,9 @@ class port_data(design):
         for bit in range(self.num_spare_cols):
             self.add_pin("sparebl_{0}".format(bit), "INOUT")
             self.add_pin("sparebr_{0}".format(bit), "INOUT")
+        for bit in range(self.num_filler_cols):
+            self.add_pin("fillerbl_{0}".format(bit), "INOUT")
+            self.add_pin("fillerbr_{0}".format(bit), "INOUT")
         if self.port in self.read_ports:
             for bit in range(self.word_size + self.num_spare_cols):
                 self.add_pin("dout_{}".format(bit), "OUTPUT")
@@ -216,7 +221,8 @@ class port_data(design):
 
         # has_rbl is a boolean treated as 1 if true 0 if false typical python
         self.precharge_array = factory.create(module_type="precharge_array",
-                                              columns=self.num_cols + self.num_spare_cols + self.has_rbl,
+                                              columns=self.num_cols + self.num_spare_cols
+                                                      + self.num_filler_cols + self.has_rbl,
                                               offsets=precharge_bit_offsets,
                                               bitcell_bl=self.bl_names[self.port],
                                               bitcell_br=self.br_names[self.port],
@@ -310,6 +316,10 @@ class port_data(design):
         for bit in range(self.num_spare_cols):
             temp.append("sparebl_{0}".format(bit))
             temp.append("sparebr_{0}".format(bit))
+
+        for bit in range(self.num_filler_cols):
+            temp.append("fillerbl_{0}".format(bit))
+            temp.append("fillerbr_{0}".format(bit))
 
         # Use right BLs for RBL
         if self.port==1 and self.has_rbl:
@@ -694,8 +704,9 @@ class port_data(design):
             self.copy_layout_pin(self.precharge_array_inst, "br_0", "rbl_br")
             bit_offset=1
         elif self.port==1 and self.has_rbl:
-            self.copy_layout_pin(self.precharge_array_inst, "bl_{}".format(self.num_cols + self.num_spare_cols), "rbl_bl")
-            self.copy_layout_pin(self.precharge_array_inst, "br_{}".format(self.num_cols + self.num_spare_cols), "rbl_br")
+            rbl_bit = self.num_cols + self.num_spare_cols + self.num_filler_cols
+            self.copy_layout_pin(self.precharge_array_inst, "bl_{}".format(rbl_bit), "rbl_bl")
+            self.copy_layout_pin(self.precharge_array_inst, "br_{}".format(rbl_bit), "rbl_br")
             bit_offset=0
         else:
             bit_offset=0
@@ -720,6 +731,20 @@ class port_data(design):
                 self.copy_layout_pin(self.precharge_array_inst,
                                      "br_{}".format(self.num_cols + bit + bit_offset),
                                      "sparebr_{}".format(bit))
+            else:
+                debug.error("Didn't find precharge array.")
+
+        # Filler columns are deliberately precharge-only.  Equal BL/BR levels
+        # make them electrically inert when a regular wordline is selected.
+        for bit in range(self.num_filler_cols):
+            if self.precharge_array_inst:
+                precharge_bit = self.num_cols + self.num_spare_cols + bit + bit_offset
+                self.copy_layout_pin(self.precharge_array_inst,
+                                     "bl_{}".format(precharge_bit),
+                                     "fillerbl_{}".format(bit))
+                self.copy_layout_pin(self.precharge_array_inst,
+                                     "br_{}".format(precharge_bit),
+                                     "fillerbr_{}".format(bit))
             else:
                 debug.error("Didn't find precharge array.")
 

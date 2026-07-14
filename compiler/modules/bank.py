@@ -372,11 +372,21 @@ class bank(design):
             left_rbl = []
             right_rbl = []
 
+        # Some bitcell layouts tile in groups wider than one column.  Pad the
+        # physical array after its user-visible data and repair columns so a
+        # technology never has to expose a spare column merely for tiling.
+        replica_cols = len(left_rbl) + len(right_rbl)
+        visible_cols = self.num_cols + self.num_spare_cols
+        self.num_filler_cols = (-(visible_cols + replica_cols)
+                                % self.array_col_multiple)
+        array_cols = visible_cols + self.num_filler_cols
+        debug.info(1, "Adding {} internal filler column(s)".format(self.num_filler_cols))
+
         local_array_size = OPTS.local_array_size
 
         if local_array_size > 0:
             # Find the even multiple that satisfies the fanout with equal sized local arrays
-            total_cols = self.num_cols + self.num_spare_cols
+            total_cols = array_cols
             num_lb = floor(total_cols / local_array_size)
             final_size = total_cols - num_lb * local_array_size
             cols = [local_array_size] * (num_lb - 1)
@@ -390,7 +400,7 @@ class bank(design):
                                                 right_rbl=right_rbl)
         else:
             self.bitcell_array = factory.create(module_type="capped_replica_bitcell_array",
-                                                cols=self.num_cols + self.num_spare_cols,
+                                                cols=array_cols,
                                                 rows=self.num_rows,
                                                 rbl=rbl,
                                                 left_rbl=left_rbl,
@@ -399,7 +409,7 @@ class bank(design):
         self.port_address = []
         for port in self.all_ports:
             self.port_address.append(factory.create(module_type="port_address",
-                                                    cols=self.num_cols + self.num_spare_cols,
+                                                    cols=array_cols,
                                                     rows=self.num_rows,
                                                     port=port,
                                                     has_rbl=self.has_rbl))
@@ -411,6 +421,7 @@ class bank(design):
                                                  sram_config=self.sram_config,
                                                  port=port,
                                                  has_rbl=self.has_rbl,
+                                                 num_filler_cols=self.num_filler_cols,
                                                  bit_offsets=self.bit_offsets))
 
     def create_bitcell_array(self):
@@ -730,6 +741,9 @@ class bank(design):
         for col in range(self.num_spare_cols):
             inst2_bl_name.append("spare" + inst2.mod.get_bl_names() + "_{}".format(col))
             inst2_br_name.append("spare" + inst2.mod.get_br_names() + "_{}".format(col))
+        for col in range(self.num_filler_cols):
+            inst2_bl_name.append("filler" + inst2.mod.get_bl_names() + "_{}".format(col))
+            inst2_br_name.append("filler" + inst2.mod.get_br_names() + "_{}".format(col))
 
         self.connect_bitlines(inst1=inst1,
                               inst2=inst2,
