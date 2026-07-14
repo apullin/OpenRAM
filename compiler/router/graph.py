@@ -200,6 +200,7 @@ class graph:
 
         # Find the blockages that are in the routing area
         self.graph_blockages = []
+        self.graph_blockage_set = set()
         self.find_graph_blockages(region)
 
         # Find the vias that are in the routing area
@@ -228,13 +229,14 @@ class graph:
 
         for blockage in self.router.blockages:
             # Skip if already included
-            if blockage in self.graph_blockages:
+            if blockage in self.graph_blockage_set:
                 continue
             # Set the region's lpp to current blockage's lpp so that the
             # overlaps method works
             region.lpp = blockage.lpp
             if region.overlaps(blockage):
                 self.graph_blockages.append(blockage)
+                self.graph_blockage_set.add(blockage)
         # Make sure that the source or target fake pins are included as blockage
         for shape in [self.source, self.target]:
             for blockage in self.graph_blockages:
@@ -243,6 +245,7 @@ class graph:
                     break
             else:
                 self.graph_blockages.append(shape)
+                self.graph_blockage_set.add(shape)
 
 
     def find_graph_vias(self, region):
@@ -372,11 +375,14 @@ class graph:
     def remove_blocked_nodes(self):
         """ Remove graph nodes that are marked to be removed. """
 
-        for i in range(len(self.nodes) - 1, -1, -1):
-            node = self.nodes[i]
+        kept = 0
+        for node in self.nodes:
             if node.remove:
                 node.remove_all_neighbors()
-                self.nodes.remove(node)
+            else:
+                self.nodes[kept] = node
+                kept += 1
+        del self.nodes[kept:]
 
 
     def save_end_nodes(self):

@@ -45,8 +45,8 @@ class graph_node:
         """ Disconnect all current neighbors. """
 
         for neighbor in self.neighbors:
-            self.neighbors.remove(neighbor)
             neighbor.neighbors.remove(self)
+        self.neighbors.clear()
 
 
     def get_direction(self, b):
