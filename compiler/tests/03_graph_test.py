@@ -111,18 +111,32 @@ class graph_test(openram_test):
         self.assertTrue(equivalent.overlaps(touching))
         self.assertFalse(equivalent.overlaps(x_disjoint))
         self.assertFalse(equivalent.overlaps(y_disjoint))
+        reversed_rect = graph_shape("reversed",
+                                    [vector(4, 4), vector(0, 0)],
+                                    "m1")
+        spanning = shape("spanning", (2, 2), (5, 5))
+        self.assertTrue(reversed_rect.overlaps(spanning))
 
-        class inline_overlap_shape(graph_shape):
+        shared_lpp = equivalent.lpp
+        equal_lpp = tuple([shared_lpp[0], shared_lpp[1]])
+        self.assertTrue(equivalent.same_lpp(shared_lpp, shared_lpp))
+        self.assertTrue(equivalent.same_lpp(shared_lpp, equal_lpp))
+        self.assertTrue(equivalent.same_lpp(shared_lpp,
+                                            (shared_lpp[0], None)))
+        self.assertFalse(equivalent.same_lpp(shared_lpp,
+                                             (shared_lpp[0] + 1, None)))
+
+        class short_circuit_shape(graph_shape):
             def xoverlaps(self, _other):
-                raise AssertionError("overlaps must inline the hot axis checks")
+                return False
 
             def yoverlaps(self, _other):
-                raise AssertionError("overlaps must inline the hot axis checks")
+                raise AssertionError("disjoint x must short-circuit y")
 
-        inline_overlap = inline_overlap_shape("inline_overlap",
-                                              [vector(0, 0), vector(1, 1)],
-                                              "m1")
-        self.assertTrue(inline_overlap.overlaps(equivalent))
+        short_circuit = short_circuit_shape("short_circuit",
+                                            [vector(0, 0), vector(1, 1)],
+                                            "m1")
+        self.assertFalse(short_circuit.overlaps(equivalent))
 
         left_bbox = router_bbox(shape("left_bbox", (0, 0), (2, 2)))
         right_bbox = router_bbox(shape("right_bbox", (4, 0), (6, 2)))

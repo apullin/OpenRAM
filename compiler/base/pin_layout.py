@@ -254,18 +254,7 @@ class pin_layout:
         if not self.same_lpp(self.lpp, other.lpp):
             return False
 
-        (ll, ur) = self.rect
-        (oll, our) = other.rect
-        x_overlaps = ((oll.x <= ll.x <= our.x) or
-                      (oll.x <= ur.x <= our.x) or
-                      (ll.x <= oll.x <= ur.x) or
-                      (ll.x <= our.x <= ur.x))
-        if not x_overlaps:
-            return False
-        return ((oll.y <= ll.y <= our.y) or
-                (oll.y <= ur.y <= our.y) or
-                (ll.y <= oll.y <= ur.y) or
-                (ll.y <= our.y <= ur.y))
+        return self.xoverlaps(other) and self.yoverlaps(other)
 
     def area(self):
         """ Return the area. """
