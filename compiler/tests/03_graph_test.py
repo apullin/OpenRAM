@@ -229,8 +229,15 @@ class graph_test(openram_test):
                 self.bounds.append(bounds)
                 return iter(self.blockages)
 
-        probe_router = SimpleNamespace(get_lpp=lambda _z: source.lpp)
+        probe_lpp_calls = []
+
+        def get_probe_lpp(z):
+            probe_lpp_calls.append(z)
+            return source.lpp
+
+        probe_router = SimpleNamespace(get_lpp=get_probe_lpp)
         probe_graph = graph(probe_router)
+        self.assertEqual(probe_lpp_calls, [])
         probe_graph.source = source
         probe_tree = recording_tree()
         other_probe_tree = recording_tree()
@@ -240,6 +247,52 @@ class graph_test(openram_test):
         self.assertFalse(probe_graph.is_probe_blocked(probe_p1, probe_p2))
         self.assertEqual(probe_tree.bounds, [(1, 3, 4, 3)])
         self.assertEqual(other_probe_tree.bounds, [])
+        self.assertEqual(probe_lpp_calls, [0])
+
+        probe_tree.bounds.clear()
+        for p1, p2, expected_bounds in [
+                ((1, 3), (4, 3), (1, 3, 4, 3)),
+                ((2, 5), (2, 1), (2, 1, 2, 5)),
+                ((2, 1), (2, 5), (2, 1, 2, 5)),
+                ((2, 2), (2, 2), (2, 2, 2, 2))]:
+            p1 = SimpleNamespace(x=p1[0], y=p1[1], z=0)
+            p2 = SimpleNamespace(x=p2[0], y=p2[1], z=0)
+            self.assertFalse(probe_graph.is_probe_blocked(p1, p2))
+            self.assertEqual(probe_tree.bounds[-1], expected_bounds)
+        self.assertEqual(probe_lpp_calls, [0])
+
+        lazy_lpp_calls = []
+
+        def get_lazy_lpp(z):
+            lazy_lpp_calls.append(z)
+            return source.lpp
+
+        lazy_graph = graph(SimpleNamespace(get_lpp=get_lazy_lpp))
+        lazy_graph.blockage_bbox_trees = [None, None]
+        for z in (0, 0, 1, 1):
+            p1 = SimpleNamespace(x=1, y=1, z=z)
+            p2 = SimpleNamespace(x=2, y=1, z=z)
+            self.assertFalse(lazy_graph.is_probe_blocked(p1, p2))
+        self.assertEqual(lazy_lpp_calls, [0, 1])
+        self.assertEqual(lazy_graph._route_lpps,
+                         [source.lpp, source.lpp])
+
+        build_lpp_calls = []
+
+        def get_build_lpp(z):
+            build_lpp_calls.append(z)
+            return source.lpp
+
+        built_graph = graph(SimpleNamespace(get_lpp=get_build_lpp))
+        built_graph.graph_blockages = []
+        built_graph.graph_vias = []
+        built_graph.build_bbox_trees()
+        self.assertEqual(build_lpp_calls, [0, 1])
+        for z in (0, 1):
+            p1 = SimpleNamespace(x=1, y=1, z=z)
+            p2 = SimpleNamespace(x=2, y=1, z=z)
+            self.assertFalse(built_graph.is_probe_blocked(p1, p2))
+        self.assertEqual(build_lpp_calls, [0, 1])
 
         other_layer = shape("blocked", (2, 2), (3, 4), "m2")
         probe_tree.blockages = [other_layer]

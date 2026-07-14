@@ -25,6 +25,7 @@ class graph:
         self.source_nodes = []
         self.target_nodes = []
         self._node_blockage_rules = None
+        self._route_lpps = [None, None]
 
 
     def is_routable(self, shape):
@@ -81,12 +82,20 @@ class graph:
 
         p1x, p1y = p1.x, p1.y
         p2x, p2y = p2.x, p2.y
-        pll_x = min(p1x, p2x)
-        pll_y = min(p1y, p2y)
-        pur_x = max(p1x, p2x)
-        pur_y = max(p1y, p2y)
-        probe_lpp = self.router.get_lpp(p1.z)
-        blockage_tree = self.blockage_bbox_trees[p1.z]
+        if p1x <= p2x:
+            pll_x, pur_x = p1x, p2x
+        else:
+            pll_x, pur_x = p2x, p1x
+        if p1y <= p2y:
+            pll_y, pur_y = p1y, p2y
+        else:
+            pll_y, pur_y = p2y, p1y
+        z = p1.z
+        probe_lpp = self._route_lpps[z]
+        if probe_lpp is None:
+            probe_lpp = self.router.get_lpp(z)
+            self._route_lpps[z] = probe_lpp
+        blockage_tree = self.blockage_bbox_trees[z]
         if blockage_tree is None:
             return False
 
@@ -292,7 +301,10 @@ class graph:
     def build_bbox_trees(self):
         """ Build bbox trees for blockages and vias in the routing region. """
 
-        route_lpps = [self.router.get_lpp(z) for z in range(2)]
+        route_lpps = self._route_lpps
+        for z, route_lpp in enumerate(route_lpps):
+            if route_lpp is None:
+                route_lpps[z] = self.router.get_lpp(z)
         blockage_boxes = [[], []]
         for shape in self.graph_blockages:
             shape_z = self.router.get_zindex(shape.lpp)
