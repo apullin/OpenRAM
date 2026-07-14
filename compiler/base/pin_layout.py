@@ -398,6 +398,32 @@ class pin_layout:
         return vector(0.5*(self.rect[0].x+self.rect[1].x),
                       self.rect[0].y)
 
+    # Optional tech attributes, resolved once: a failed `from openram.tech
+    # import ...` is not cached by the import system, so retrying it for
+    # every pin write pays a full module search each time.
+    _tech_purposes = None
+
+    @classmethod
+    def _get_tech_purposes(cls):
+        if cls._tech_purposes is None:
+            try:
+                from openram.tech import pin_purpose as global_pin_purpose
+            except ImportError:
+                global_pin_purpose = None
+            try:
+                from openram.tech import label_purpose
+                has_label_purpose = True
+            except ImportError:
+                label_purpose = None
+                has_label_purpose = False
+            try:
+                from openram.tech import layer_override_purpose
+            except Exception:
+                layer_override_purpose = {}
+            cls._tech_purposes = (global_pin_purpose, has_label_purpose,
+                                  label_purpose, layer_override_purpose)
+        return cls._tech_purposes
+
     def gds_write_file(self, newLayout):
         """Writes the pin shape and label to GDS"""
         debug.info(4, "writing pin (" + str(self.layer) + "):"
@@ -412,24 +438,19 @@ class pin_layout:
             (pin_layer_num, pin_purpose) = layer[self.layer]
         (layer_num, purpose) = layer[self.layer]
 
-        # Try to use a global pin purpose if it exists,
-        # otherwise, use the regular purpose
-        try:
-            from openram.tech import pin_purpose as global_pin_purpose
-            pin_purpose = global_pin_purpose
-        except ImportError:
-            pass
+        (global_pin_purpose, has_label_purpose,
+         label_purpose, layer_override_purpose) = self._get_tech_purposes()
 
-        try:
-            from openram.tech import label_purpose
-            try:
-                from openram.tech import layer_override_purpose
-                if pin_layer_num in layer_override_purpose:
-                    layer_num = layer_override_purpose[pin_layer_num][0]
-                    label_purpose = layer_override_purpose[pin_layer_num][1]
-            except:
-                pass
-        except ImportError:
+        # Use a global pin purpose if it exists,
+        # otherwise, use the regular purpose
+        if global_pin_purpose is not None:
+            pin_purpose = global_pin_purpose
+
+        if has_label_purpose:
+            if pin_layer_num in layer_override_purpose:
+                layer_num = layer_override_purpose[pin_layer_num][0]
+                label_purpose = layer_override_purpose[pin_layer_num][1]
+        else:
             label_purpose = purpose
 
         newLayout.addBox(layerNumber=layer_num,
