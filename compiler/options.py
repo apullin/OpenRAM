@@ -137,6 +137,16 @@ class options(optparse.Values):
     verify_cache = True
     # Remove noncritical memory cells for characterization speed-up
     trim_netlist = True
+    # Number of random read/write cycles in the generated functional
+    # simulation. The full-netlist functional transient dominates
+    # simulation-based characterization wall time and scales linearly
+    # with this; sweeps can trade coverage for time (final signoff
+    # should keep the default).
+    functional_cycles = 200
+    # Cache simulation-based DFF setup/hold results keyed on the DFF
+    # netlist, transistor models, corner, and slew table. These repeat
+    # identically for every design in a sweep.
+    char_cache = True
     # Run with extracted parasitics
     use_pex = False
     # Output config with all options

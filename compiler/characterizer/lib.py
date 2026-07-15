@@ -687,6 +687,49 @@ class lib:
             # OPTS.bl_path_names = self.char_sram_results["bl_path_names"]
 
 
+    def _setup_hold_cache_file(self):
+        """ Cache key for the DFF setup/hold characterization: the result
+        is a pure function of the DFF netlist, the transistor models for
+        the corner, the corner itself, the slew table and the feasible
+        period -- none of which depend on the SRAM being compiled, so
+        design-space sweeps repeat this identical set of simulations for
+        every candidate. """
+        import hashlib
+        import json as _json
+        from openram import tech
+        h = hashlib.sha256()
+        try:
+            with open(self.sh.dff.sp_file, "rb") as f:
+                h.update(f.read())
+        except OSError:
+            return None
+        model_files = []
+        process = self.corner[0]
+        for key in ("fet_models", "fet_libraries"):
+            try:
+                for entry in tech.spice[key][process]:
+                    model_files.append(entry[0] if isinstance(entry, (list, tuple)) else entry)
+            except (KeyError, AttributeError):
+                pass
+        for p in sorted(str(m) for m in model_files):
+            try:
+                with open(p.replace("SIMULATOR", (OPTS.spice_name or "ngspice").lower()), "rb") as f:
+                    h.update(f.read())
+            except OSError:
+                h.update(p.encode())
+            h.update(b"\0")
+        meta = _json.dumps({
+            "tech": OPTS.tech_name,
+            "cell": self.sh.dff.cell_name,
+            "corner": [str(c) for c in self.corner],
+            "slews": [float(s) for s in self.slews],
+            "period": float(self.sh.period),
+            "spice": OPTS.spice_name or "ngspice",
+        }, sort_keys=True)
+        h.update(meta.encode())
+        base = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+        return os.path.join(base, "openram", "char", h.hexdigest() + ".json")
+
     def compute_setup_hold(self):
         """ Do the analysis if we haven't characterized a FF yet """
         # Do the analysis if we haven't characterized a FF yet
@@ -694,8 +737,26 @@ class lib:
             self.sh = setup_hold(self.corner)
             if self.use_model:
                 self.times = self.sh.analytical_setuphold(self.slews,self.slews)
-            else:
-                self.times = self.sh.analyze(self.slews,self.slews)
+                return
+            import json
+            cache_file = None
+            if getattr(OPTS, "char_cache", True):
+                cache_file = self._setup_hold_cache_file()
+            if cache_file is not None and os.path.exists(cache_file):
+                try:
+                    with open(cache_file) as f:
+                        self.times = json.load(f)
+                    debug.info(1, "Setup/hold times loaded from cache ({})".format(cache_file))
+                    return
+                except (OSError, ValueError):
+                    pass
+            self.times = self.sh.analyze(self.slews,self.slews)
+            if cache_file is not None:
+                os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+                tmp_file = "{}.tmp{}".format(cache_file, os.getpid())
+                with open(tmp_file, "w") as f:
+                    json.dump(self.times, f)
+                os.replace(tmp_file, cache_file)
 
 
     def parse_info(self,corner,lib_name, is_first_corner, time):

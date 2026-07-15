@@ -114,7 +114,7 @@ class sram():
         # Save a functional simulation file with default period
         functional(self.s,
                    spname,
-                   cycles=200,
+                   cycles=OPTS.functional_cycles,
                    output_path=OPTS.output_path)
         print_time("Spice writing", datetime.datetime.now(), start_time)
 
