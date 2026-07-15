@@ -14,10 +14,26 @@ from openram import debug
 from openram import tech
 from openram import OPTS
 from collections import OrderedDict
+
+
+def _wrap_spice_line(text, sep):
+    """ sep.join(textwrap.wrap(text)) with the dominant short-line case
+    fast-pathed (textwrap pays a regex split per call). Only taken when
+    wrapping and whitespace collapsing cannot change the text. """
+    if len(text) <= 70 and "  " not in text and text == text.strip():
+        return text
+    return sep.join(tr.wrap(text))
 from .delay_data import delay_data
 from .wire_spice_model import wire_spice_model
 from .power_data import power_data
 from .logical_effort import convert_relative_c_to_farad, convert_farad_to_relative_c
+
+
+# Global netlist revision, bumped by any mutation the spice writers read
+# (pins, connections, comments, pin types, trim sets). The Rust netlist
+# export is memoized against it, so the three save-time writes (sp,
+# trimmed, lvs) share one export unless something changed in between.
+netlist_rev = [0]
 
 
 class spice():
@@ -87,11 +103,13 @@ class spice():
             self.comments = []
 
         self.comments.append(comment)
+        netlist_rev[0] += 1
 
     def add_pin(self, name, pin_type="INOUT"):
         """ Adds a pin to the pins list. Default type is INOUT signal. """
         debug.check(name not in self.pins, "cannot add duplicate spice pin {}".format(name))
         self.pins[name] = pin_spice(name, pin_type, self)
+        netlist_rev[0] += 1
 
     def add_pin_list(self, pin_list, pin_type="INOUT"):
         """ Adds a pin_list to the pins list """
@@ -126,6 +144,7 @@ class spice():
               \n pin names={}\n port types={}".format(self.name, list(self.pins), type_list))
         for pin, type in zip(self.pins.values(), type_list):
             pin.set_type(type)
+        netlist_rev[0] += 1
 
     def get_pin_type(self, name):
         """ Returns the type of the signal pin. """
@@ -207,6 +226,10 @@ class spice():
 
         ordered_nets = self.create_nets(ordered_args)
         self.insts[-1].connect_spice_pins(ordered_nets)
+        self._inst_conns_cache = None
+        self._inst_conns_lower_cache = None
+        self._net_alias_index = None
+        netlist_rev[0] += 1
 
     def create_nets(self, names_list):
         nets = []
@@ -303,7 +326,12 @@ class spice():
             # If spice isn't defined, we dynamically generate one.
 
             # recursively write the modules
-            for mod in self.mods:
+            # (self.mods is a set; sort for reproducible netlist order)
+            if OPTS.deterministic:
+                mods = sorted(self.mods, key=lambda m: m.cell_name)
+            else:
+                mods = self.mods
+            for mod in mods:
                 if self.contains(mod, usedMODS):
                     continue
                 usedMODS.append(mod)
@@ -315,7 +343,7 @@ class spice():
                 return
 
             # write out the first spice line (the subcircuit)
-            wrapped_pins = "\n+ ".join(tr.wrap(" ".join(list(self.pins))))
+            wrapped_pins = _wrap_spice_line(" ".join(list(self.pins)), "\n+ ")
             sp.write("\n.SUBCKT {0}\n+ {1}\n".format(self.cell_name,
                                                      wrapped_pins))
 
@@ -360,12 +388,12 @@ class spice():
                     sp.write("\n")
                 else:
                     if trim and inst.name in self.trim_insts:
-                        wrapped_connections = "\n*+ ".join(tr.wrap(" ".join(inst.get_connections())))
+                        wrapped_connections = _wrap_spice_line(" ".join(inst.get_connections()), "\n*+ ")
                         sp.write("X{0}\n*+ {1}\n*+ {2}\n".format(inst.name,
                                                                  wrapped_connections,
                                                                  inst.mod.cell_name))
                     else:
-                        wrapped_connections = "\n+ ".join(tr.wrap(" ".join(inst.get_connections())))
+                        wrapped_connections = _wrap_spice_line(" ".join(inst.get_connections()), "\n+ ")
                         sp.write("X{0}\n+ {1}\n+ {2}\n".format(inst.name,
                                                                wrapped_connections,
                                                                inst.mod.cell_name))
@@ -388,6 +416,12 @@ class spice():
     def sp_write(self, spname, lvs=False, trim=False):
         """Writes the spice to files"""
         debug.info(3, "Writing to {0}".format(spname))
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.router.rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from openram.base.rust_netlist import export_netlist
+                export_netlist(self).write_spice(spname, lvs, trim)
+                return
         spfile = open(spname, 'w')
         spfile.write("*FIRST LINE IS A COMMENT\n")
         usedMODS = list()
@@ -698,11 +732,57 @@ class spice():
         return aliases
 
     def get_instance_connections(self):
-        conns = []
-        for inst in self.insts:
-            if "contact" not in inst.name:
-                conns.append(inst.get_connections())
+        # Cached: net-alias searches re-enter modules many times and the
+        # connection names are fixed once instances are connected
+        # (connect_inst invalidates).
+        conns = getattr(self, "_inst_conns_cache", None)
+        if conns is None:
+            conns = []
+            for inst in self.insts:
+                if "contact" not in inst.name:
+                    conns.append(inst.get_connections())
+            self._inst_conns_cache = conns
         return conns
+
+    def get_instance_connections_lower(self):
+        """ Lowercased twin of get_instance_connections (alias searches
+        compare case-insensitively millions of times). """
+        conns_lower = getattr(self, "_inst_conns_lower_cache", None)
+        if conns_lower is None:
+            conns_lower = [[c.lower() for c in conns]
+                           for conns in self.get_instance_connections()]
+            self._inst_conns_lower_cache = conns_lower
+        return conns_lower
+
+    def _get_net_alias_index(self):
+        """
+        Connection-name index for is_net_alias. The reference scan walks
+        every instance's connections per query (rows*cols on arrays); the
+        result only depends on (a) whether a name appears among the
+        lowered connections at all and (b) the first (module, module pin)
+        per distinct submodule for each connection name in scan order, so
+        both are precomputed here. Invalidated by connect_inst.
+        """
+        idx = getattr(self, "_net_alias_index", None)
+        if idx is None:
+            all_conns = set()
+            recurse = {}
+            for subinst, inst_conns in zip(self.insts,
+                                           self.get_instance_connections_lower()):
+                submod = subinst.mod
+                for conn_lower, mod_pin in zip(inst_conns, submod.pins):
+                    all_conns.add(conn_lower)
+                    entry = recurse.get(conn_lower)
+                    if entry is None:
+                        recurse[conn_lower] = entry = ([], set())
+                    (pairs, mods) = entry
+                    if submod not in mods:
+                        mods.add(submod)
+                        pairs.append((submod, mod_pin))
+            pins_lower = frozenset(pin.lower() for pin in self.pins)
+            idx = (all_conns, recurse, pins_lower)
+            self._net_alias_index = idx
+        return idx
 
     def is_net_alias(self, known_net, net_alias, mod, exclusion_set):
         """
@@ -710,20 +790,22 @@ class spice():
         """
         if self in exclusion_set:
             return False
-        # Check ports of this mod
-        for pin in self.pins:
-            if self.is_net_alias_name_check(known_net, pin, net_alias, mod):
+        known_lower = known_net.lower()
+        alias_lower = net_alias.lower()
+        (all_conns, recurse, pins_lower) = self._get_net_alias_index()
+        # The reference interleaves these checks in one scan, but every
+        # branch just returns True (the recursion is side-effect free), so
+        # the disjunction order does not change the result.
+        if (self == mod) and known_lower == alias_lower:
+            if alias_lower in pins_lower:
                 return True
-        # Check connections of all other subinsts
-        mod_set = set()
-        for subinst, inst_conns in zip(self.insts, self.get_instance_connections()):
-            for inst_conn, mod_pin in zip(inst_conns, subinst.mod.pins):
-                if self.is_net_alias_name_check(known_net, inst_conn, net_alias, mod):
+            if alias_lower in all_conns:
+                return True
+        entry = recurse.get(known_lower)
+        if entry is not None:
+            for (submod, mod_pin) in entry[0]:
+                if submod.is_net_alias(mod_pin, net_alias, mod, exclusion_set):
                     return True
-                elif inst_conn.lower() == known_net.lower() and subinst.mod not in mod_set:
-                    if subinst.mod.is_net_alias(mod_pin, net_alias, mod, exclusion_set):
-                        return True
-                    mod_set.add(subinst.mod)
         return False
 
     def is_net_alias_name_check(self, parent_net, child_net, alias_net, mod):

@@ -34,6 +34,8 @@ class functional(simulation):
             random.seed(12345)
         elif OPTS.functional_seed:
             random.seed(OPTS.functional_seed)
+        elif OPTS.deterministic:
+            random.seed(12345)
         else:
             seed = time.time_ns()
             random.seed(seed)

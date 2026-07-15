@@ -28,6 +28,11 @@ class signal_escape_router(router):
 
     def route(self, pin_names):
         """ Route the given pins to the perimeter. """
+        if getattr(OPTS, "use_rust_router", False):
+            from .rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from .rust_route import escape_route
+                return escape_route(self, pin_names)
         debug.info(1, "Running signal escape router...")
 
         # Prepare gdsMill to find pins and blockages
@@ -50,7 +55,7 @@ class signal_escape_router(router):
 
         # Add vdd and gnd pins as blockages as well
         # NOTE: This is done to make vdd and gnd pins DRC-safe
-        for pin in self.all_pins:
+        for pin in self.iter_pins(self.all_pins):
             self.blockages.append(self.inflate_shape(pin))
 
         # Route vdd and gnd
@@ -60,7 +65,7 @@ class signal_escape_router(router):
             # Change fake pin's name so the graph will treat it as routable
             target.name = source.name
             # Create the graph
-            g = graph(self)
+            g = self.make_graph()
             g.create_graph(source, target)
             # Find the shortest path from source to target
             path = g.find_shortest_path()
@@ -214,7 +219,7 @@ class signal_escape_router(router):
 
         to_route = []
         for name in pin_names:
-            pin = next(iter(self.pins[name]))
+            pin = next(iter(self.iter_pins(self.pins[name])))
             fake = self.create_fake_pin(pin)
             to_route.append((pin, fake, pin.distance(fake)))
         return sorted(to_route, key=lambda x: x[2])

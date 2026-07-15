@@ -59,7 +59,10 @@ def parse_args():
         optparse.make_option("-j", "--threads",
                              action="store",
                              type="int",
-                             help="Specify the number of threads (default: 1)",
+                             help="Specify the number of parallel "
+                                  "characterization jobs (default: 1; keep 1 "
+                                  "when dispatching many OpenRAM processes "
+                                  "externally)",
                              dest="num_threads"),
         optparse.make_option("-m", "--sim_threads",
                              action="store",
@@ -200,6 +203,28 @@ def init_openram(config_file, is_unit_test=False):
     from openram.sram_factory import factory
     factory.reset()
 
+    # Clear tech-coupled module caches so batch runs (several configs in
+    # one process) start each config exactly like a fresh process.
+    import sys as _sys
+    _pin_layout = _sys.modules.get("openram.base.pin_layout")
+    if _pin_layout:
+        _pin_layout._lpp_name_cache.clear()
+        _pin_layout.pin_layout._tech_purposes = None
+    _rust_pins = _sys.modules.get("openram.base.rust_pins")
+    if _rust_pins:
+        _rust_pins._layer_specs.clear()
+    _hierarchy_design = _sys.modules.get("openram.base.hierarchy_design")
+    if _hierarchy_design:
+        _hierarchy_design.hierarchy_design.name_map = []
+    _hierarchy_layout = _sys.modules.get("openram.base.hierarchy_layout")
+    if _hierarchy_layout and hasattr(_hierarchy_layout.layout, "_drc_constants"):
+        # Re-arm the one-time class setup (DRC constants and the static
+        # measurement contacts) so it reruns like a fresh process.
+        del _hierarchy_layout.layout._drc_constants
+    _channel_route = _sys.modules.get("openram.base.channel_route")
+    if _channel_route:
+        _channel_route.channel_route.unique_id = 0
+
     global OPTS
 
     # Setup correct bitcell names
@@ -322,6 +347,25 @@ def read_config(config_file, is_unit_test=False):
     if not os.path.isabs(config_file):
         config_file = os.getcwd() + "/" +  config_file
 
+    # Batch runs read several configs in one process. Each config must
+    # start from the same OPTS state a fresh process would have: the
+    # post-command-line snapshot (the not-in-OPTS test below exists so
+    # the command line wins over the config file). Values computed into
+    # OPTS during a previous compile must not shadow this config either.
+    # Tool discovery (spice/DRC/LVS executables) runs once per process
+    # at characterizer/verify import, so those results are kept.
+    pristine = getattr(OPTS, "_pristine_options", None)
+    if pristine is None:
+        OPTS._pristine_options = dict(OPTS.__dict__)
+    else:
+        keep = {k: v for k, v in OPTS.__dict__.items()
+                if k.endswith("_exe") or k in ("spice_name", "mpi_name",
+                                               "hier_seperator")}
+        OPTS.__dict__.clear()
+        OPTS.__dict__.update(pristine)
+        OPTS._pristine_options = pristine
+        OPTS.__dict__.update(keep)
+
     # Make it a python file if the base name was only given
     config_file = re.sub(r'\.py$', "", config_file)
 
@@ -347,6 +391,9 @@ def read_config(config_file, is_unit_test=False):
     sys.path.insert(0, dir_name)
     # Import the configuration file of which modules to use
     debug.info(1, "Configuration file is " + config_file + ".py")
+    # Batch runs read several configs in one process; drop any cached
+    # module so a same-named config in another directory is re-read.
+    sys.modules.pop(module_name, None)
     try:
         config = importlib.import_module(module_name)
     except ImportError:
@@ -357,7 +404,6 @@ def read_config(config_file, is_unit_test=False):
         # The command line will over-ride the config file
         # except in the case of the tech name! This is because the tech name
         # is sometimes used to specify the config file itself (e.g. unit tests)
-        # Note that if we re-read a config file, nothing will get read again!
         if k not in OPTS.__dict__ or k == "tech_name":
             OPTS.__dict__[k] = v
             OPTS.overridden[k] = True

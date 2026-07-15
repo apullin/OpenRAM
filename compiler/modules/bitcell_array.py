@@ -82,6 +82,9 @@ class bitcell_array(bitcell_base_array):
             (row, col) = key
             if col>0 and col<self.column_size-1 and row>0 and row<self.row_size-1:
                 self.trim_insts.add(self.cell_inst[key].name)
+        # trim_insts feeds the netlist writers; invalidate the export memo
+        from openram.base.hierarchy_spice import netlist_rev
+        netlist_rev[0] += 1
 
     def analytical_power(self, corner, load):
         """Power of Bitcell array and bitline in nW."""

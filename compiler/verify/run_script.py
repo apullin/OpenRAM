@@ -16,8 +16,10 @@ from openram import debug
 from openram import OPTS
 
 
-def run_script(cell_name, script="lvs"):
-    """ Run script and create output files. """
+def start_script(cell_name, script="lvs"):
+    """ Launch a run_*.sh script; returns a handle for wait_script.
+    Splitting launch from wait lets independent scripts (e.g. DRC and
+    LVS after extraction) run concurrently. """
 
     echo_cmd_output = OPTS.verbose_level > 1
 
@@ -32,7 +34,10 @@ def run_script(cell_name, script="lvs"):
     debug.info(2, "Starting {}".format(scriptpath))
     start = time.time()
     with open(outfile, 'wb') as fo, open(errfile, 'wb') as fe:
-        if OPTS.use_nix:
+        # When this process already runs inside a nix shell, the tools are
+        # on PATH; re-entering `nix develop` per script re-evaluates the
+        # flake every time for nothing.
+        if OPTS.use_nix and "IN_NIX_SHELL" not in os.environ:
             p_cmd = [
                 "nix",
                 "--extra-experimental-features", "nix-command flakes",
@@ -45,19 +50,25 @@ def run_script(cell_name, script="lvs"):
         p = subprocess.Popen(
                 p_cmd, stdout=fo, stderr=fe, cwd=OPTS.openram_temp)
 
+        tails = []
         if echo_cmd_output:
-            tailo = subprocess.Popen([
-                'tail',
-                '-f',                # Follow the output
-                '--pid', str(p.pid), # Close when this pid exits
-                outfile,
-            ])
-            taile = subprocess.Popen([
-                'tail',
-                '-f',                # Follow the output
-                '--pid', str(p.pid), # Close when this pid exits
-                errfile,
-            ])
+            for f in [outfile, errfile]:
+                tails.append(subprocess.Popen([
+                    'tail',
+                    '-f',                # Follow the output
+                    '--pid', str(p.pid), # Close when this pid exits
+                    f,
+                ]))
+
+    os.chdir(cwd)
+
+    return (p, tails, scriptpath, start, outfile, errfile, resultsfile)
+
+
+def wait_script(handle):
+    """ Wait for a script started with start_script. """
+
+    (p, tails, scriptpath, start, outfile, errfile, resultsfile) = handle
 
     lastoutput = start
     while p.poll() == None:
@@ -66,22 +77,24 @@ def run_script(cell_name, script="lvs"):
         if outputdelta > 30:
             lastoutput = time.time()
             debug.info(1, "Still running {} ({:.0f} seconds)".format(scriptpath, runningfor))
-        time.sleep(1)
+        # Fine-grained poll: 1s quanta added up to a second of latency
+        # per script in pipelined DRC/LVS runs.
+        time.sleep(0.05)
     assert p.poll() != None, (p.poll(), p)
     p.wait()
 
     # Kill the tail commands if they haven't finished.
-    if echo_cmd_output:
-        if tailo.poll() != None:
-            tailo.kill()
-        tailo.wait()
-        if taile.poll() != None:
-            taile.kill()
-        taile.wait()
+    for t in tails:
+        if t.poll() != None:
+            t.kill()
+        t.wait()
 
     debug.info(2, "Finished {} with {}".format(scriptpath, p.returncode))
 
-    os.chdir(cwd)
-
     return (outfile, errfile, resultsfile)
 
+
+def run_script(cell_name, script="lvs"):
+    """ Run script and create output files. """
+
+    return wait_script(start_script(cell_name, script))

@@ -132,6 +132,9 @@ class options(optparse.Values):
     check_lvsdrc = False
     # This determines whether LVS and DRC is checked for every submodule.
     inline_lvsdrc = False
+    # Cache DRC/LVS verdicts keyed on the exact layout/netlist/tool
+    # inputs (re-verifying an unchanged design is then free).
+    verify_cache = True
     # Remove noncritical memory cells for characterization speed-up
     trim_netlist = True
     # Run with extracted parasitics
@@ -154,6 +157,8 @@ class options(optparse.Values):
     # Use Nix to initialize the default open-source toolchain.
     # If disabled, OpenRAM uses whatever tools are already in PATH.
     use_nix = True
+    # Use the Rust routing kernel (rust/openram-py) when it is available
+    use_rust_router = True
     # Variable to select the variant of spice
     spice_name = None
     # The spice executable being used which is derived from the user PATH.
@@ -199,6 +204,11 @@ class options(optparse.Values):
 
     # Random seed for functional simulation
     functional_seed = None
+
+    # Make compiles reproducible: iterate shape/module sets in a stable
+    # order and use a fixed functional-simulation seed. Two runs of the
+    # same config then produce identical outputs (modulo timestamps).
+    deterministic = True
 
     # Route the input/output pins to the perimeter
     perimeter_pins = True

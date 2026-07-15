@@ -65,16 +65,8 @@ def write_drc_script(cell_name, gds_name, extract, final_verification, output_pa
     os.system("chmod u+x {}".format(run_file))
 
 
-def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=False):
-    """Run DRC check on a cell which is implemented in gds_name."""
-
-    global num_drc_runs
-    num_drc_runs += 1
-
-    write_drc_script(cell_name, gds_name, extract, final_verification, OPTS.openram_temp, sp_name=sp_name)
-
-    (outfile, errfile, resultsfile) = run_script(cell_name, "drc")
-
+def _parse_drc_results(cell_name, resultsfile):
+    """ Parse the KLayout DRC report for the error count. """
     # Check the result for these lines in the summary:
     # Total DRC errors found: 0
     # The count is shown in this format:
@@ -98,6 +90,42 @@ def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=
         debug.info(1, result_str)
 
     return errors
+
+
+def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=False):
+    """Run DRC check on a cell which is implemented in gds_name."""
+
+    global num_drc_runs
+    num_drc_runs += 1
+
+    write_drc_script(cell_name, gds_name, extract, final_verification, OPTS.openram_temp, sp_name=sp_name)
+
+    (outfile, errfile, resultsfile) = run_script(cell_name, "drc")
+
+    return _parse_drc_results(cell_name, resultsfile)
+
+
+def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
+    """Run DRC and LVS concurrently: the KLayout decks are independent
+    (each reads the GDS itself, and the LVS deck does its own
+    extraction). """
+
+    global num_drc_runs
+    global num_lvs_runs
+    num_drc_runs += 1
+    num_lvs_runs += 1
+
+    write_drc_script(cell_name, gds_name, True, final_verification, OPTS.openram_temp, sp_name=sp_name)
+    write_lvs_script(cell_name, gds_name, sp_name, final_verification)
+
+    drc_handle = start_script(cell_name, "drc")
+    lvs_handle = start_script(cell_name, "lvs")
+    (drc_outfile, drc_errfile, drc_resultsfile) = wait_script(drc_handle)
+    (lvs_outfile, lvs_errfile, lvs_resultsfile) = wait_script(lvs_handle)
+
+    drc_errors = _parse_drc_results(cell_name, drc_resultsfile)
+    lvs_errors = _parse_lvs_results(cell_name, lvs_outfile, lvs_resultsfile)
+    return (drc_errors, lvs_errors)
 
 
 def write_lvs_script(cell_name, gds_name, sp_name, final_verification=False, output_path=None):
@@ -149,21 +177,8 @@ def write_lvs_script(cell_name, gds_name, sp_name, final_verification=False, out
     os.system("chmod u+x {}".format(run_file))
 
 
-def run_lvs(cell_name, gds_name, sp_name, final_verification=False, output_path=None):
-    """Run LVS check on a given top-level name which is
-    implemented in gds_name and sp_name. Final verification will
-    ensure that there are no remaining virtual conections. """
-
-    global num_lvs_runs
-    num_lvs_runs += 1
-
-    if not output_path:
-        output_path = OPTS.openram_temp
-
-    write_lvs_script(cell_name, gds_name, sp_name, final_verification)
-
-    (outfile, errfile, resultsfile) = run_script(cell_name, "lvs")
-
+def _parse_lvs_results(cell_name, outfile, resultsfile):
+    """ Parse the KLayout LVS output for the error count. """
     # check the result for these lines in the summary:
     try:
         f = open(outfile, "r")
@@ -185,6 +200,24 @@ def run_lvs(cell_name, gds_name, sp_name, final_verification=False, output_path=
         total_errors += 1
 
     return total_errors
+
+
+def run_lvs(cell_name, gds_name, sp_name, final_verification=False, output_path=None):
+    """Run LVS check on a given top-level name which is
+    implemented in gds_name and sp_name. Final verification will
+    ensure that there are no remaining virtual conections. """
+
+    global num_lvs_runs
+    num_lvs_runs += 1
+
+    if not output_path:
+        output_path = OPTS.openram_temp
+
+    write_lvs_script(cell_name, gds_name, sp_name, final_verification)
+
+    (outfile, errfile, resultsfile) = run_script(cell_name, "lvs")
+
+    return _parse_lvs_results(cell_name, outfile, resultsfile)
 
 
 def run_pex(name, gds_name, sp_name, output=None, final_verification=False, output_path=None):

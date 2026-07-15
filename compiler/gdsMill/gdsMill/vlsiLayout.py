@@ -853,10 +853,12 @@ class VlsiLayout:
         and [coordinate 1, coordinate 2,...] format and user
         units for polygons.
         """
-        boundaries = set()
+        # Deduplicate while keeping insertion order (a plain set iterates in
+        # hash order, which made blockage order irreproducible downstream).
+        boundaries = {}
         for TreeUnit in self.xyTree:
-            # print(TreeUnit[0])
-            boundaries.update(self.getShapesInStructure(lpp, TreeUnit))
+            for shape in self.getShapesInStructure(lpp, TreeUnit):
+                boundaries[shape] = None
 
         # Convert to user units
         user_boundaries = []

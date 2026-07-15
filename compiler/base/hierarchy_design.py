@@ -67,8 +67,9 @@ class hierarchy_design(spice, layout):
             tempgds = "{}.gds".format(self.name)
             self.gds_write("{0}{1}".format(OPTS.openram_temp, tempgds))
             # Final verification option does not allow nets to be connected by label.
-            self.drc_errors = verify.run_drc(self.cell_name, tempgds, tempspice, extract=True, final_verification=final_verification)
-            self.lvs_errors = verify.run_lvs(self.cell_name, tempgds, tempspice, final_verification=final_verification)
+            (self.drc_errors, self.lvs_errors) = verify.run_drc_lvs(
+                self.cell_name, tempgds, tempspice,
+                final_verification=final_verification)
 
             # force_check is used to determine decoder height and other things, so we shouldn't fail
             # if that flag is set

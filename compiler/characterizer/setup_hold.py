@@ -261,6 +261,25 @@ class setup_hold():
         """
         return self.bidir_search(0, "HOLD")
 
+    def analyze_slew_pair(self, pair):
+        """
+        Run the four setup/hold searches for one (clock slew, data slew)
+        combination. Safe to run as a parallel job: it only touches files
+        under OPTS.openram_temp.
+        """
+        (self.related_input_slew, self.constrained_input_slew) = pair
+        debug.info(1, "Clock slew: {0} Data slew: {1}".format(self.related_input_slew,
+                                                              self.constrained_input_slew))
+        LH_setup_time = self.setup_LH_time()
+        debug.info(1, "  Setup Time for low_to_high transition: {0}".format(LH_setup_time))
+        HL_setup_time = self.setup_HL_time()
+        debug.info(1, "  Setup Time for high_to_low transition: {0}".format(HL_setup_time))
+        LH_hold_time = self.hold_LH_time()
+        debug.info(1, "  Hold Time for low_to_high transition: {0}".format(LH_hold_time))
+        HL_hold_time = self.hold_HL_time()
+        debug.info(1, "  Hold Time for high_to_low transition: {0}".format(HL_hold_time))
+        return (LH_setup_time, HL_setup_time, LH_hold_time, HL_hold_time)
+
     def analyze(self, related_slews, constrained_slews):
         """main function to calculate both setup and hold time for the
         DFF and returns a dictionary that contains 4 lists for both
@@ -289,22 +308,19 @@ class setup_hold():
                  # }
         # return times
 
-        for self.related_input_slew in related_slews:
-            for self.constrained_input_slew in constrained_slews:
-                debug.info(1, "Clock slew: {0} Data slew: {1}".format(self.related_input_slew,
-                                                                      self.constrained_input_slew))
-                LH_setup_time = self.setup_LH_time()
-                debug.info(1, "  Setup Time for low_to_high transition: {0}".format(LH_setup_time))
-                HL_setup_time = self.setup_HL_time()
-                debug.info(1, "  Setup Time for high_to_low transition: {0}".format(HL_setup_time))
-                LH_hold_time = self.hold_LH_time()
-                debug.info(1, "  Hold Time for low_to_high transition: {0}".format(LH_hold_time))
-                HL_hold_time = self.hold_HL_time()
-                debug.info(1, "  Hold Time for high_to_low transition: {0}".format(HL_hold_time))
-                LH_setup.append(LH_setup_time)
-                HL_setup.append(HL_setup_time)
-                LH_hold.append(LH_hold_time)
-                HL_hold.append(HL_hold_time)
+        # Each slew pair's bidirectional searches are independent of the
+        # others, so they can run as parallel jobs (-j / OPTS.num_threads).
+        from .parallel_sim import run_jobs
+        pairs = [(related_slew, constrained_slew)
+                 for related_slew in related_slews
+                 for constrained_slew in constrained_slews]
+        for result in run_jobs(self.analyze_slew_pair, pairs):
+            (LH_setup_time, HL_setup_time,
+             LH_hold_time, HL_hold_time) = result
+            LH_setup.append(LH_setup_time)
+            HL_setup.append(HL_setup_time)
+            LH_hold.append(LH_hold_time)
+            HL_hold.append(HL_hold_time)
 
         times = {"setup_times_LH": LH_setup,
                  "setup_times_HL": HL_setup,

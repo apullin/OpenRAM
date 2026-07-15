@@ -142,6 +142,16 @@ class router_tech:
         """ Return the minimum spacing of a layer given wire width. """
         if width is None:
             width = self.get_layer_width(zindex)
+        # Memoize: shape inflation queries the same few widths for every
+        # blockage, and each query walks the DRC rule table.
+        cache = getattr(self, "_layer_space_cache", None)
+        if cache is None:
+            cache = self._layer_space_cache = {}
+        try:
+            return cache[(zindex, width)]
+        except KeyError:
+            pass
         layer_name = self.get_layer(zindex)
         min_spacing = drc(str(layer_name)+"_to_"+str(layer_name), self.route_track_width * width, math.inf)
+        cache[(zindex, width)] = min_spacing
         return min_spacing

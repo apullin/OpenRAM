@@ -67,10 +67,27 @@ class bitcell_base_array(design):
         Creates a list of connections in the bitcell,
         indexed by column and row, for instance use in bitcell_array
         """
-        bitcell_pins = []
-        for port in self.all_ports:
-            bitcell_pins.extend([x for x in self.get_bitline_names(port) if x.endswith("_{0}".format(col))])
-        bitcell_pins.extend([x for x in self.all_wordline_names if x.endswith("_{0}".format(row))])
+        # Group the names by their trailing "_{index}" once: scanning every
+        # bitline/wordline name per bitcell is O(rows*cols*names) on big
+        # arrays. Same port-major name order as the endswith scan.
+        try:
+            col_pins = self._bitcell_col_pins
+            row_pins = self._bitcell_row_pins
+        except AttributeError:
+            col_pins = self._bitcell_col_pins = {}
+            row_pins = self._bitcell_row_pins = {}
+            for port in self.all_ports:
+                for name in self.get_bitline_names(port):
+                    parts = name.rsplit("_", 1)
+                    if len(parts) == 2:
+                        col_pins.setdefault(parts[1], []).append(name)
+            for name in self.all_wordline_names:
+                parts = name.rsplit("_", 1)
+                if len(parts) == 2:
+                    row_pins.setdefault(parts[1], []).append(name)
+
+        bitcell_pins = list(col_pins.get(str(col), []))
+        bitcell_pins.extend(row_pins.get(str(row), []))
         bitcell_pins.append("vdd")
         bitcell_pins.append("gnd")
 
@@ -197,6 +214,11 @@ class bitcell_base_array(design):
                 pass
             
             
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.base.rust_pins import bulk_copy_supply_pins
+            if bulk_copy_supply_pins(self, self.insts, power_name, ground_name):
+                return
+
         for inst in self.insts:
             if power_name in inst.mod.get_pin_names():
                 self.copy_layout_pin(inst, power_name, new_name='vdd')

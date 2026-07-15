@@ -23,6 +23,8 @@ from openram.sram_factory import factory
 from openram import OPTS
 from .vector import vector
 from .pin_layout import pin_layout
+from .pin_layout import pin_sort_key
+from .rust_pins import pin_group, copy_layout_pin_rust
 from .utils import round_to_grid, ceil
 from . import geometry
 
@@ -390,6 +392,11 @@ class layout():
             for pin_set in self.pin_map.values():
                 if len(pin_set) == 0:
                     continue
+                if type(pin_set) is pin_group:
+                    b = pin_set.bounds()
+                    lowestx = min(b[0], lowestx)
+                    lowesty = min(b[1], lowesty)
+                    continue
                 lowestx = min(min(pin.lx() for pin in pin_set), lowestx)
                 lowesty = min(min(pin.by() for pin in pin_set), lowesty)
 
@@ -413,6 +420,11 @@ class layout():
         if len(self.pin_map) > 0:
             for pin_set in self.pin_map.values():
                 if len(pin_set) == 0:
+                    continue
+                if type(pin_set) is pin_group:
+                    b = pin_set.bounds()
+                    highestx = max(b[2], highestx)
+                    highesty = max(b[3], highesty)
                     continue
                 highestx = max(max(pin.rx() for pin in pin_set), highestx)
                 highesty = max(max(pin.uy() for pin in pin_set), highesty)
@@ -481,6 +493,10 @@ class layout():
         for pin_name in self.pin_map.keys():
             # All the pins are absolute coordinates that need to be updated.
             pin_list = self.pin_map[pin_name]
+            if type(pin_list) is pin_group:
+                # In-place mutation below; convert back to Python pins.
+                pin_list = pin_list.pythonize()
+                self.pin_map[pin_name] = pin_list
             for pin in pin_list:
                 pin.rect = [pin.ll() - offset, pin.ur() - offset]
 
@@ -671,6 +687,11 @@ class layout():
         You can optionally rename the pin to a new name.
         You can optionally add an offset vector by which to move the pin.
         """
+        if getattr(OPTS, "use_rust_router", False):
+            if copy_layout_pin_rust(self, instance, pin_name, new_name,
+                                    relative_offset):
+                return
+
         pins = instance.get_pins(pin_name)
 
         if len(pins) == 0:
@@ -1134,7 +1155,7 @@ class layout():
         """
         Delete a labeled pin (or all pins of the same name)
         """
-        self.pin_map[text] = set()
+        self.pin_map[text] = {}
 
     def remove_layout_pins(self):
         """
@@ -1176,6 +1197,14 @@ class layout():
         if not height:
             height = drc["minwidth_{0}".format(layer)]
 
+        group = self.pin_map.get(text)
+        if type(group) is pin_group:
+            if isinstance(layer, str):
+                return group.add(layer, offset, width, height)
+            # lpp layers resolve through pin_layout; give the group back
+            # to the Python path.
+            self.pin_map[text] = group.pythonize()
+
         new_pin = pin_layout(text,
                              [offset, offset + vector(width, height)],
                              layer)
@@ -1184,11 +1213,12 @@ class layout():
             # Check if there's a duplicate!
             # and if so, silently ignore it.
             # Rounding errors may result in some duplicates.
+            # NOTE: pin_map values are dicts used as insertion-ordered sets
+            # (same hash/eq dedup) so pin iteration is reproducible.
             if new_pin not in self.pin_map[text]:
-                self.pin_map[text].add(new_pin)
+                self.pin_map[text][new_pin] = new_pin
         except KeyError:
-            self.pin_map[text] = set()
-            self.pin_map[text].add(new_pin)
+            self.pin_map[text] = {new_pin: new_pin}
 
         return new_pin
 
@@ -1526,7 +1556,16 @@ class layout():
         for i in self.objs:
             i.gds_write_file(gds_layout)
         for pin_name in self.pin_map.keys():
-            for pin in self.pin_map[pin_name]:
+            pin_set = self.pin_map[pin_name]
+            if type(pin_set) is pin_group:
+                # Store-side emission (sorted internally when deterministic)
+                pin_set.gds_write_file(gds_layout)
+                continue
+            if OPTS.deterministic:
+                pins = sorted(pin_set, key=pin_sort_key)
+            else:
+                pins = pin_set
+            for pin in pins:
                 pin.gds_write_file(gds_layout)
 
         # If it's not a premade cell
@@ -1561,6 +1600,19 @@ class layout():
     def gds_write(self, gds_name):
         """Write the entire gds of the object to the file."""
         debug.info(3, "Writing to {}".format(gds_name))
+
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.router.rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from openram.router.rust_gds import export_design
+                import datetime
+                rl = export_design(self)
+                now = datetime.datetime.now()
+                dates = [now.year, now.month, now.day,
+                         now.hour, now.minute, now.second] * 2
+                rl.write_gds(gds_name, dates, "DEFAULT.DB", 5)
+                debug.info(3, "Done writing to {}".format(gds_name))
+                return
 
         # If we already wrote a GDS, we need to reset and traverse it again in
         # case we made changes.
@@ -1890,25 +1942,39 @@ class layout():
         """
         Get the bounding box from the GDS
         """
-        gds_filename = OPTS.openram_temp + "temp.gds"
-        # If didn't specify a gds blockage file, write it out to read the gds
-        # This isn't efficient, but easy for now
-        # Load the gds file and read in all the shapes
-        self.gds_write(gds_filename)
-        layout = gdsMill.VlsiLayout(units=GDS["unit"])
-        reader = gdsMill.Gds2reader(layout)
-        reader.loadFromFile(gds_filename)
-        top_name = layout.rootStructureName
+        rs = None
+        if getattr(OPTS, "use_rust_router", False):
+            from openram.router.rust_router import load_openram_rs
+            rs = load_openram_rs()
 
-        if not self.bbox:
-            # The boundary will determine the limits to the size
-            # of the routing grid
-            boundary = layout.measureBoundary(top_name)
-            # These must be un-indexed to get rid of the numpy array type
-            ll = vector(boundary[0][0].item(), boundary[0][1].item())
-            ur = vector(boundary[1][0].item(), boundary[1][1].item())
+        if rs is not None:
+            if not self.bbox:
+                from openram.router.rust_gds import export_design
+                bounds = export_design(self).measure_boundary()
+                ll = vector(bounds[0], bounds[1])
+                ur = vector(bounds[2], bounds[3])
+            else:
+                ll, ur = self.bbox
         else:
-            ll, ur = self.bbox
+            gds_filename = OPTS.openram_temp + "temp.gds"
+            # If didn't specify a gds blockage file, write it out to read
+            # the gds. This isn't efficient, but easy for now.
+            # Load the gds file and read in all the shapes
+            self.gds_write(gds_filename)
+            layout = gdsMill.VlsiLayout(units=GDS["unit"])
+            reader = gdsMill.Gds2reader(layout)
+            reader.loadFromFile(gds_filename)
+            top_name = layout.rootStructureName
+
+            if not self.bbox:
+                # The boundary will determine the limits to the size
+                # of the routing grid
+                boundary = layout.measureBoundary(top_name)
+                # These must be un-indexed to get rid of the numpy array type
+                ll = vector(boundary[0][0].item(), boundary[0][1].item())
+                ur = vector(boundary[1][0].item(), boundary[1][1].item())
+            else:
+                ll, ur = self.bbox
 
         ll_offset = vector(0, 0)
         ur_offset = vector(0, 0)

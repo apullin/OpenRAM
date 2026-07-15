@@ -30,6 +30,11 @@ class supply_router(router):
 
     def route(self, vdd_name="vdd", gnd_name="gnd"):
         """ Route the given pins in the given order. """
+        if getattr(OPTS, "use_rust_router", False):
+            from .rust_router import load_openram_rs
+            if load_openram_rs() is not None:
+                from .rust_route import supply_route
+                return supply_route(self, vdd_name, gnd_name)
         debug.info(1, "Running router for {} and {}...".format(vdd_name, gnd_name))
 
         # Save pin names
@@ -78,18 +83,18 @@ class supply_router(router):
 
         # Add vdd and gnd pins as blockages as well
         # NOTE: This is done to make vdd and gnd pins DRC-safe
-        for pin in self.all_pins:
+        for pin in self.iter_pins(self.all_pins):
             self.blockages.append(self.inflate_shape(pin))
 
         # Route vdd and gnd
         routed_count = 0
         routed_max = len(self.pins[vdd_name]) + len(self.pins[gnd_name])
         for pin_name in [vdd_name, gnd_name]:
-            pins = self.pins[pin_name]
+            pins = self.iter_pins(self.pins[pin_name])
             # Route closest pins according to the minimum spanning tree
             for source, target in self.get_mst_pairs(list(pins)):
                 # Create the graph
-                g = graph(self)
+                g = self.make_graph()
                 g.create_graph(source, target)
                 # Find the shortest path from source to target
                 path = g.find_shortest_path()
@@ -180,8 +185,10 @@ class supply_router(router):
         return pin, fake_pins
 
 
-    def add_ring_pin(self, pin_name, num_vias=3, num_fake_pins=4):
-        """ Add the supply ring to the layout. """
+    def add_ring_pin(self, pin_name, num_vias=3, num_fake_pins=4, blockage_sink=None):
+        """ Add the supply ring to the layout. The new ring pins are added
+        as blockages through blockage_sink when given (the Rust store path
+        owns the blockage list); otherwise onto self.blockages. """
 
         # Add side pins
         new_pins = []
@@ -215,7 +222,11 @@ class supply_router(router):
         # Save side pins for routing
         self.new_pins[pin_name] = new_pins
         for pin in new_pins:
-            self.blockages.append(self.inflate_shape(pin))
+            shape = self.inflate_shape(pin)
+            if blockage_sink is None:
+                self.blockages.append(shape)
+            else:
+                blockage_sink(shape)
 
 
     def get_mst_pairs(self, pins):

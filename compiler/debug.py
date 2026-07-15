@@ -100,6 +100,12 @@ log.setup_output = []
 log.create_file = True
 
 
+def is_verbose(lev):
+    """Cheap level check so hot paths can skip building log strings."""
+    from openram.globals import OPTS
+    return OPTS.verbose_level >= lev
+
+
 def info(lev, str):
     from openram.globals import OPTS
     # 99 is a special never print level

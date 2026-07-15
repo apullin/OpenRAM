@@ -64,6 +64,149 @@ num_pex_runs = 0
 #     (outfile, errfile, resultsfile) = run_script(cell_name, "filter")
 
 
+def _write_gds_read_commands(f, cell_name, gds_name):
+    """ The GDS read preamble shared by the magic sessions: reading the
+    GDS directly is cheap (seconds) and, unlike a shared .mag view,
+    involves no cell files or file locks, so independent sessions can
+    run concurrently. """
+    f.write("drc off\n")
+    f.write("set VDD vdd\n")
+    f.write("set GND gnd\n")
+    f.write("set SUB gnd\n")
+    f.write("gds warning default\n")
+    try:
+        from openram.tech import flatglob
+    except ImportError:
+        flatglob = []
+        f.write("gds readonly true\n")
+    for entry in flatglob:
+        f.write("gds flatglob " + entry + "\n")
+    f.write("gds flatten true\n")
+    f.write("gds ordering true\n")
+    f.write("gds read {}\n".format(gds_name))
+    f.write('puts "Finished reading gds {}"\n'.format(gds_name))
+    f.write("load {}\n".format(cell_name))
+    f.write('puts "Finished loading cell {}"\n'.format(cell_name))
+    f.write("cellname delete \\(UNNAMED\\)\n")
+
+
+def write_drc_lvs_scripts(cell_name, gds_name, sp_name, final_verification, output_path):
+    """ Write independent extraction and DRC scripts that each read the
+    GDS themselves (no shared .mag view), so they can run concurrently.
+    """
+    global OPTS
+
+    full_magic_file = os.environ.get('OPENRAM_MAGICRC', None)
+    if not full_magic_file:
+        full_magic_file = OPTS.openram_tech + "tech/.magicrc"
+    if os.path.exists(full_magic_file):
+        shutil.copy(full_magic_file, output_path + "/.magicrc")
+    else:
+        debug.warning("Could not locate .magicrc file: {}".format(full_magic_file))
+
+    # Extraction session: GDS read + extract + ext2spice for LVS.
+    run_file = output_path + "run_extract.sh"
+    f = open(run_file, "w")
+    f.write("#!/bin/sh\n")
+    f.write('export OPENRAM_TECH="{}"\n'.format(os.environ['OPENRAM_TECH']))
+    f.write('echo "$(date): Starting extraction using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write('\n')
+    f.write("{} -dnull -noconsole << EOF\n".format(OPTS.drc_exe[1]))
+    _write_gds_read_commands(f, cell_name, gds_name)
+    _write_extract_commands(f, cell_name, sp_name, True, final_verification)
+    f.write("quit -noprompt\n")
+    f.write("EOF\n")
+    f.write("magic_retcode=$?\n")
+    f.write('echo "$(date): Finished ($magic_retcode) extraction using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write("exit $magic_retcode\n")
+    f.close()
+    os.system("chmod u+x {}".format(run_file))
+
+    # DRC session: GDS read + drc check (same commands as the .mag-view
+    # DRC script after its load).
+    try:
+        from openram.tech import blackbox_cells
+    except ImportError:
+        blackbox_cells = []
+    run_file = output_path + "run_drc.sh"
+    f = open(run_file, "w")
+    f.write("#!/bin/sh\n")
+    f.write('export OPENRAM_TECH="{}"\n'.format(os.environ['OPENRAM_TECH']))
+    for blackbox_cell_name in blackbox_cells:
+        mag_file = OPTS.openram_tech + "maglef_lib/" + blackbox_cell_name + ".mag"
+        debug.check(os.path.isfile(mag_file), "Could not find blackbox cell {}".format(mag_file))
+        f.write('cp {0} .\n'.format(mag_file))
+    f.write('echo "$(date): Starting DRC using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write('\n')
+    f.write("{} -dnull -noconsole << EOF\n".format(OPTS.drc_exe[1]))
+    _write_gds_read_commands(f, cell_name, gds_name)
+    # The read preamble disables the background checker for speed;
+    # re-enable it for the check.
+    f.write("drc on\n")
+    f.write("select top cell\n")
+    f.write("expand\n")
+    f.write('puts "Finished expanding"\n')
+    f.write("drc euclidean on\n")
+    # Workaround to address DRC CIF style not loading if 'drc check' is run before catchup
+    if OPTS.tech_name=="gf180mcu":
+      f.write("drc catchup\n")
+    f.write("drc check\n")
+    f.write('puts "Finished drc check"\n')
+    f.write("drc catchup\n")
+    f.write('puts "Finished drc catchup"\n')
+    f.write("drc count total\n")
+    f.write("quit -noprompt\n")
+    f.write("EOF\n")
+    f.write("magic_retcode=$?\n")
+    f.write('echo "$(date): Finished ($magic_retcode) DRC using Magic {}"\n'.format(OPTS.drc_exe[1]))
+    f.write("exit $magic_retcode\n")
+    f.close()
+    os.system("chmod u+x {}".format(run_file))
+
+
+def _write_extract_commands(f, cell_name, sp_name, extract, final_verification, pre=""):
+    """ The extraction + ext2spice command block shared by the combined
+    and split ext scripts. """
+    # Extract
+    if not sp_name:
+        f.write("port makeall\n")
+    else:
+        f.write("readspice {}\n".format(sp_name))
+    # Hack to work around unit scales in SkyWater
+    if OPTS.tech_name=="sky130":
+        f.write(pre + "extract style ngspice(si)\n")
+    if final_verification and OPTS.route_supplies:
+        f.write(pre + "extract unique all\n")
+    # Coupling capacitances dominate extraction time and are discarded
+    # anyway (ext2spice cthresh infinite below); don't compute them.
+    f.write(pre + "extract no coupling\n")
+    f.write(pre + "extract all\n")
+    f.write(pre + "select top cell\n")
+    f.write(pre + "feedback why\n")
+    f.write('puts "Finished extract"\n')
+    # f.write(pre + "ext2spice hierarchy on\n")
+    # f.write(pre + "ext2spice scale off\n")
+    # lvs exists in 8.2.79, but be backword compatible for now
+    # f.write(pre + "ext2spice lvs\n")
+    f.write(pre + "ext2spice hierarchy on\n")
+    f.write(pre + "ext2spice format ngspice\n")
+    f.write(pre + "ext2spice cthresh infinite\n")
+    f.write(pre + "ext2spice rthresh infinite\n")
+    f.write(pre + "ext2spice renumber off\n")
+    f.write(pre + "ext2spice scale off\n")
+    f.write(pre + "ext2spice blackbox on\n")
+    f.write(pre + "ext2spice subcircuit top on\n")
+    f.write(pre + "ext2spice global off\n")
+
+    # Can choose hspice, ngspice, or spice3,
+    # but they all seem compatible enough.
+    f.write(pre + "ext2spice format ngspice\n")
+    f.write(pre + "ext2spice {}\n".format(cell_name))
+    f.write(pre + "select top cell\n")
+    f.write(pre + "feedback why\n")
+    f.write('puts "Finished ext2spice"\n')
+
+
 def write_drc_script(cell_name, gds_name, extract, final_verification, output_path, sp_name=None):
     """ Write a magic script to perform DRC and optionally extraction. """
     global OPTS
@@ -119,45 +262,13 @@ def write_drc_script(cell_name, gds_name, extract, final_verification, output_pa
     f.write("cellname delete \\(UNNAMED\\)\n")
     f.write("writeall force\n")
 
-    # Extract
-    if not sp_name:
-        f.write("port makeall\n")
-    else:
-        f.write("readspice {}\n".format(sp_name))
     if not extract:
         pre = "#"
     else:
         pre = ""
-    # Hack to work around unit scales in SkyWater
-    if OPTS.tech_name=="sky130":
-        f.write(pre + "extract style ngspice(si)\n")
-    if final_verification and OPTS.route_supplies:
-        f.write(pre + "extract unique all\n")
-    f.write(pre + "extract all\n")
-    f.write(pre + "select top cell\n")
-    f.write(pre + "feedback why\n")
-    f.write('puts "Finished extract"\n')
-    # f.write(pre + "ext2spice hierarchy on\n")
-    # f.write(pre + "ext2spice scale off\n")
-    # lvs exists in 8.2.79, but be backword compatible for now
-    # f.write(pre + "ext2spice lvs\n")
-    f.write(pre + "ext2spice hierarchy on\n")
-    f.write(pre + "ext2spice format ngspice\n")
-    f.write(pre + "ext2spice cthresh infinite\n")
-    f.write(pre + "ext2spice rthresh infinite\n")
-    f.write(pre + "ext2spice renumber off\n")
-    f.write(pre + "ext2spice scale off\n")
-    f.write(pre + "ext2spice blackbox on\n")
-    f.write(pre + "ext2spice subcircuit top on\n")
-    f.write(pre + "ext2spice global off\n")
 
-    # Can choose hspice, ngspice, or spice3,
-    # but they all seem compatible enough.
-    f.write(pre + "ext2spice format ngspice\n")
-    f.write(pre + "ext2spice {}\n".format(cell_name))
-    f.write(pre + "select top cell\n")
-    f.write(pre + "feedback why\n")
-    f.write('puts "Finished ext2spice"\n')
+    _write_extract_commands(f, cell_name, sp_name, extract,
+                            final_verification, pre)
 
     f.write("quit -noprompt\n")
     f.write("EOF\n")
@@ -210,18 +321,8 @@ def write_drc_script(cell_name, gds_name, extract, final_verification, output_pa
     os.system("chmod u+x {}".format(run_file))
 
 
-def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=False):
-    """Run DRC check on a cell which is implemented in gds_name."""
-
-    global num_drc_runs
-    num_drc_runs += 1
-
-    write_drc_script(cell_name, gds_name, extract, final_verification, OPTS.openram_temp, sp_name=sp_name)
-
-    (outfile, errfile, resultsfile) = run_script(cell_name, "ext")
-
-    (outfile, errfile, resultsfile) = run_script(cell_name, "drc")
-
+def _parse_drc_results(cell_name, outfile):
+    """ Parse the Magic DRC output for the error count. """
     # Check the result for these lines in the summary:
     # Total DRC errors found: 0
     # The count is shown in this format:
@@ -256,6 +357,135 @@ def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=
         debug.info(1, result_str)
 
     return errors
+
+
+def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=False):
+    """Run DRC check on a cell which is implemented in gds_name."""
+
+    global num_drc_runs
+    num_drc_runs += 1
+
+    write_drc_script(cell_name, gds_name, extract, final_verification, OPTS.openram_temp, sp_name=sp_name)
+
+    (outfile, errfile, resultsfile) = run_script(cell_name, "ext")
+
+    (outfile, errfile, resultsfile) = run_script(cell_name, "drc")
+
+    return _parse_drc_results(cell_name, outfile)
+
+
+def _hash_gds_masked(h, path):
+    """ Hash a GDS stream with the BGNLIB/BGNSTR records skipped: they
+    carry modification timestamps, which must not bust the cache. """
+    with open(path, "rb") as f:
+        data = f.read()
+    pos = 0
+    n = len(data)
+    while pos + 4 <= n:
+        ln = int.from_bytes(data[pos:pos + 2], "big")
+        if ln < 4:
+            break
+        if data[pos + 2] not in (0x01, 0x05):
+            h.update(data[pos:pos + ln])
+        pos += ln
+
+
+def _verify_cache_key(cell_name, gds_name, sp_name):
+    """ The DRC/LVS verdict is a pure function of the layout, the
+    netlist, the generated tool scripts (which embed the tool paths and
+    every option), and the tech collateral; hash all of them. """
+    import hashlib
+    h = hashlib.sha256()
+    gds_path = (gds_name if os.path.isabs(gds_name)
+                else OPTS.openram_temp + gds_name)
+    try:
+        _hash_gds_masked(h, gds_path)
+    except OSError:
+        h.update(b"<missing>")
+    h.update(b"\0")
+    paths = [OPTS.openram_temp + sp_name if not os.path.isabs(sp_name)
+             else sp_name,
+             OPTS.openram_temp + "run_extract.sh",
+             OPTS.openram_temp + "run_drc.sh",
+             OPTS.openram_temp + "run_lvs.sh",
+             OPTS.openram_temp + "/.magicrc"]
+    tech_dir = OPTS.openram_tech + "tech/"
+    if os.path.isdir(tech_dir):
+        for f in sorted(os.listdir(tech_dir)):
+            if f.endswith(".tech") or f == "setup.tcl":
+                paths.append(tech_dir + f)
+    for p in paths:
+        try:
+            with open(p, "rb") as f:
+                h.update(f.read())
+        except OSError:
+            h.update(b"<missing>")
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _verify_cache_dir():
+    base = os.environ.get("XDG_CACHE_HOME",
+                          os.path.expanduser("~/.cache"))
+    return os.path.join(base, "openram", "verify")
+
+
+def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
+    """Run DRC and LVS together. The Magic DRC and Magic extraction
+    sessions each read the GDS themselves (cheap) instead of sharing a
+    .mag view (whose cell files are lock-contended), so they run fully
+    concurrently; Netgen LVS follows the extracted netlist. Verdicts
+    are cached keyed on the layout/netlist/scripts/tech content, so
+    re-verifying an unchanged design is free (verify_cache=False
+    disables it; remove ~/.cache/openram/verify to clear). """
+
+    global num_drc_runs
+    global num_lvs_runs
+    num_drc_runs += 1
+    num_lvs_runs += 1
+
+    write_drc_lvs_scripts(cell_name, gds_name, sp_name, final_verification, OPTS.openram_temp)
+    write_lvs_script(cell_name, gds_name, sp_name, final_verification)
+
+    cache_file = None
+    if getattr(OPTS, "verify_cache", True):
+        import json
+        key = _verify_cache_key(cell_name, gds_name, sp_name)
+        cache_file = os.path.join(_verify_cache_dir(), key + ".json")
+        try:
+            with open(cache_file) as f:
+                cached = json.load(f)
+            debug.info(1, "DRC/LVS verdict for {} cached: {} DRC / {} LVS "
+                          "errors ({})".format(cell_name,
+                                               cached["drc_errors"],
+                                               cached["lvs_errors"],
+                                               cache_file))
+            return (cached["drc_errors"], cached["lvs_errors"])
+        except (OSError, ValueError, KeyError):
+            pass
+
+    drc_handle = start_script(cell_name, "drc")
+    extract_handle = start_script(cell_name, "extract")
+    wait_script(extract_handle)
+    # LVS needs the extracted netlist.
+    lvs_handle = start_script(cell_name, "lvs")
+    (drc_outfile, drc_errfile, drc_resultsfile) = wait_script(drc_handle)
+    (lvs_outfile, lvs_errfile, lvs_resultsfile) = wait_script(lvs_handle)
+
+    drc_errors = _parse_drc_results(cell_name, drc_outfile)
+    lvs_errors = _parse_lvs_results(cell_name, lvs_resultsfile)
+
+    if cache_file is not None:
+        import json
+        os.makedirs(_verify_cache_dir(), exist_ok=True)
+        tmp_file = cache_file + ".tmp{}".format(os.getpid())
+        with open(tmp_file, "w") as f:
+            json.dump({"cell_name": cell_name,
+                       "drc_errors": drc_errors,
+                       "lvs_errors": lvs_errors}, f)
+        os.replace(tmp_file, cache_file)
+
+    return (drc_errors, lvs_errors)
 
 
 def write_lvs_script(cell_name, gds_name, sp_name, final_verification=False, output_path=None):
@@ -315,6 +545,12 @@ def run_lvs(cell_name, gds_name, sp_name, final_verification=False, output_path=
     write_lvs_script(cell_name, gds_name, sp_name, final_verification)
 
     (outfile, errfile, resultsfile) = run_script(cell_name, "lvs")
+
+    return _parse_lvs_results(cell_name, resultsfile)
+
+
+def _parse_lvs_results(cell_name, resultsfile):
+    """ Parse the Netgen LVS report for the error count. """
 
     total_errors = 0
 

@@ -21,6 +21,12 @@ from openram.tech import lvs_name
 from openram.tech import pex_name
 from openram import OPTS, get_tool
 
+# A config-file override (e.g. drc_name = "klayout") beats the tech's
+# default tool choice.
+drc_name = OPTS.drc_name or drc_name
+lvs_name = OPTS.lvs_name or lvs_name
+pex_name = OPTS.pex_name or pex_name
+
 debug.info(1, "Initializing verify...")
 if not OPTS.check_lvsdrc:
     debug.info(1, "LVS/DRC/PEX disabled.")
@@ -83,3 +89,25 @@ else:
 #         from .magic import filter_gds
 #     else:
 #         debug.warning("Did not find Magic.")
+
+
+def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
+    """ Run DRC and LVS on a cell. With the Magic/Netgen backends the GDS
+    read and extraction are shared and the two checks run concurrently;
+    with KLayout both decks are independent and run concurrently. Other
+    backends fall back to running them in sequence. """
+    if (OPTS.drc_exe and OPTS.drc_exe[0] == "magic"
+            and OPTS.lvs_exe and OPTS.lvs_exe[0] == "netgen"):
+        from .magic import run_drc_lvs as _magic_run_drc_lvs
+        return _magic_run_drc_lvs(cell_name, gds_name, sp_name,
+                                  final_verification)
+    if (OPTS.drc_exe and OPTS.drc_exe[0] == "klayout"
+            and OPTS.lvs_exe and OPTS.lvs_exe[0] == "klayout"):
+        from .klayout import run_drc_lvs as _klayout_run_drc_lvs
+        return _klayout_run_drc_lvs(cell_name, gds_name, sp_name,
+                                    final_verification)
+    drc_errors = run_drc(cell_name, gds_name, sp_name, extract=True,
+                         final_verification=final_verification)
+    lvs_errors = run_lvs(cell_name, gds_name, sp_name,
+                         final_verification=final_verification)
+    return (drc_errors, lvs_errors)

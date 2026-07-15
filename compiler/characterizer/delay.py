@@ -1357,6 +1357,23 @@ class delay(simulation):
                 char_port_data[port][lh_name] = proxy_values
                 char_port_data[port][hl_name] = list(proxy_values)
 
+    def simulate_load_slew_pair(self, pair):
+        """
+        One (load, slew) delay simulation. Safe to run as a parallel job:
+        it only touches files under OPTS.openram_temp.
+        """
+        # Parallel workers rebind OPTS.openram_temp to a private
+        # subdirectory, but self.output_path captured the parent dir at
+        # init; the stimulus must be written where run_sim will read it.
+        self.output_path = OPTS.openram_temp
+        (load, slew) = pair
+        self.set_load_slew(load, slew)
+        # Find the delay, dynamic power, and leakage power of the trimmed array.
+        (success, delay_results) = self.run_delay_simulation()
+        debug.check(success, "Couldn't run a simulation. slew={0} load={1}\n".format(self.slew, self.load))
+        debug.info(1, "Simulation Passed: Port {0} slew={1} load={2}".format("All", self.slew, self.load))
+        return delay_results
+
     def simulate_loads_and_slews(self, load_slews, leakage_offset):
         """Simulate all specified output loads and input slews pairs of all ports"""
 
@@ -1364,12 +1381,12 @@ class delay(simulation):
         # Set the target simulation ports to all available ports. This make sims slower but failed sims exit anyways.
         self.targ_read_ports = self.read_ports
         self.targ_write_ports = self.write_ports
-        for load, slew in load_slews:
-            self.set_load_slew(load, slew)
-            # Find the delay, dynamic power, and leakage power of the trimmed array.
-            (success, delay_results) = self.run_delay_simulation()
-            debug.check(success, "Couldn't run a simulation. slew={0} load={1}\n".format(self.slew, self.load))
-            debug.info(1, "Simulation Passed: Port {0} slew={1} load={2}".format("All", self.slew, self.load))
+        # Each (load, slew) simulation is independent of the others, so
+        # they can run as parallel jobs (-j / OPTS.num_threads); results
+        # come back in load_slews order, like the serial loop.
+        from .parallel_sim import run_jobs
+        for delay_results in run_jobs(self.simulate_load_slew_pair,
+                                      load_slews):
             # The results has a dict for every port but dicts can be empty (e.g. ports were not targeted).
             for port in self.all_ports:
                 for mname, value in delay_results[port].items():

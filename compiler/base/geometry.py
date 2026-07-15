@@ -10,6 +10,7 @@ This provides a set of useful generic types for the gdsMill interface.
 """
 import math
 import copy
+from collections import OrderedDict
 import numpy as np
 from openram import debug
 from openram import tech
@@ -181,10 +182,22 @@ class instance(geometry):
         # track if the instance's spice pin connections have been made
         self.connected = False
 
-        # deepcopy because this instance needs to
-        # change attributes in these spice objects
-        self.spice_pins = copy.deepcopy(self.mod.pins)
-        self.spice_nets = copy.deepcopy(self.mod.nets)
+        # Copy because this instance needs to change attributes in these
+        # spice objects. pin_spice/net_spice define __deepcopy__ (they copy
+        # shallowly by design); calling it directly avoids the copy-module
+        # dispatch overhead that dominates instance creation in big arrays.
+        # Some modules (e.g. contacts) keep plain lists here instead.
+        if hasattr(self.mod.pins, "items"):
+            self.spice_pins = OrderedDict(
+                (name, pin.__deepcopy__(None))
+                for name, pin in self.mod.pins.items())
+        else:
+            self.spice_pins = copy.deepcopy(self.mod.pins)
+        if hasattr(self.mod.nets, "items"):
+            self.spice_nets = {name: net.__deepcopy__(None)
+                               for name, net in self.mod.nets.items()}
+        else:
+            self.spice_nets = copy.deepcopy(self.mod.nets)
         if "contact" not in mod.name:
             for pin in self.spice_pins.values():
                 pin.set_inst(self)
@@ -203,7 +216,9 @@ class instance(geometry):
                 self.height = round_to_grid(mod.height)
         self.compute_boundary(offset, mirror, rotate)
 
-        debug.info(4, "creating instance: " + self.name)
+        if debug.is_verbose(4):
+
+            debug.info(4, "creating instance: " + self.name)
 
     def get_blockages(self, lpp, top=False):
         """ Retrieve blockages of all modules in this instance.
@@ -240,7 +255,8 @@ class instance(geometry):
 
     def gds_write_file(self, new_layout):
         """Recursively writes all the sub-modules in this instance"""
-        debug.info(4, "writing instance: " + self.name)
+        if debug.is_verbose(4):
+            debug.info(4, "writing instance: " + self.name)
         # make sure to write out my module/structure
         # (it will only be written the first time though)
         self.mod.gds_write_file(self.gds)
@@ -265,7 +281,7 @@ class instance(geometry):
         this instance location. Index will return one of several pins."""
 
         if index == -1:
-            pin = copy.deepcopy(self.mod.get_pin(name))
+            pin = self.mod.get_pin(name).copied()
             pin.transform(self.offset, self.mirror, self.rotate)
             return pin
         else:
@@ -281,10 +297,9 @@ class instance(geometry):
         """ Return an absolute pin that is offset and transformed based on
         this instance location. """
 
-        pin = copy.deepcopy(self.mod.get_pins(name))
-
         new_pins = []
-        for p in pin:
+        for p in self.mod.get_pins(name):
+            p = p.copied()
             p.transform(self.offset, self.mirror, self.rotate)
             new_pins.append(p)
         return new_pins
@@ -508,11 +523,14 @@ class label(geometry):
 
         self.size = 0
 
-        debug.info(4, "creating label " + self.text + " " + str(self.layerNumber) + " " + str(self.offset))
+        if debug.is_verbose(4):
+
+            debug.info(4, "creating label " + self.text + " " + str(self.layerNumber) + " " + str(self.offset))
 
     def gds_write_file(self, new_layout):
         """Writes the text label to GDS"""
-        debug.info(4, "writing label (" + str(self.layerNumber) + "): " + self.text)
+        if debug.is_verbose(4):
+            debug.info(4, "writing label (" + str(self.layerNumber) + "): " + self.text)
         new_layout.addText(text=self.text,
                            layerNumber=self.layerNumber,
                            purposeNumber=self.layerPurpose,
@@ -546,8 +564,9 @@ class rectangle(geometry):
         self.height = round_to_grid(self.size.y)
         self.compute_boundary(offset, "", 0)
 
-        debug.info(4, "creating rectangle (" + str(self.layerNumber) + "): "
-                   + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
+        if debug.is_verbose(4):
+            debug.info(4, "creating rectangle (" + str(self.layerNumber) + "): "
+                       + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
 
     def get_blockages(self, layer):
         """ Returns a list of one rectangle if it is on this layer"""
@@ -560,8 +579,9 @@ class rectangle(geometry):
 
     def gds_write_file(self, new_layout):
         """Writes the rectangular shape to GDS"""
-        debug.info(4, "writing rectangle (" + str(self.layerNumber) + "):"
-                   + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
+        if debug.is_verbose(4):
+            debug.info(4, "writing rectangle (" + str(self.layerNumber) + "):"
+                       + str(self.width) + "x" + str(self.height) + " @ " + str(self.offset))
         new_layout.addBox(layerNumber=self.layerNumber,
                           purposeNumber=self.layerPurpose,
                           offsetInMicrons=self.offset,

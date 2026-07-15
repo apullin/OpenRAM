@@ -7,6 +7,19 @@
 #
 import math
 from openram import debug
+
+# lpp -> resolved layer name (verified against the live tech on each hit)
+_lpp_name_cache = {}
+
+
+def pin_sort_key(pin):
+    """
+    Stable ordering key for pin/shape sets. Sets of pin_layout iterate in
+    hash order, which varies between runs; sorting with this key at the
+    points where set order leaks into outputs makes compiles reproducible.
+    """
+    ll, ur = pin.rect
+    return (str(pin.name), str(pin.lpp), ll.x, ll.y, ur.x, ur.y)
 from openram.tech import GDS, drc
 from openram.tech import layer, layer_indices
 from .vector import vector
@@ -17,6 +30,19 @@ class pin_layout:
     A class to represent a rectangular design pin. It is limited to a
     single shape.
     """
+
+    def copied(self):
+        """
+        Field-level copy for instance pin transforms: same result as
+        deepcopy for pin_layout (strings are shared, the rect vectors are
+        fresh so transform() can mutate them) without the copy-module
+        dispatch overhead.
+        """
+        new = self.__class__.__new__(self.__class__)
+        new.__dict__.update(self.__dict__)
+        ll, ur = self._rect
+        new._rect = [vector(ll.x, ll.y), vector(ur.x, ur.y)]
+        return new
 
     def __init__(self, name, rect, layer_name_pp):
         self.name = name
@@ -31,19 +57,31 @@ class pin_layout:
         debug.check(self.width() > 0, "Zero width pin.")
         debug.check(self.height() > 0, "Zero height pin.")
 
-        # These are the valid pin layers
-        valid_layers = {x: layer[x] for x in layer_indices.keys()}
-
         # if it's a string, use the name
         if type(layer_name_pp) == str:
             self._layer = layer_name_pp
         # else it is required to be a lpp
         else:
+            # Resolve lpp -> layer name through a cache: the valid-layer
+            # dict was rebuilt and scanned for every pin construction.
+            cache_key = (layer_name_pp[0], layer_name_pp[1])
+            cached_name = _lpp_name_cache.get(cache_key)
+            if cached_name is not None:
+                cached_lpp = layer.get(cached_name)
+                if cached_lpp and self.same_lpp(layer_name_pp, cached_lpp):
+                    self._layer = cached_name
+                    self.lpp = layer[self._layer]
+                    self._recompute_hash()
+                    return
+
+            # These are the valid pin layers
+            valid_layers = {x: layer[x] for x in layer_indices.keys()}
             for (layer_name, lpp) in valid_layers.items():
                 if not lpp:
                     continue
                 if self.same_lpp(layer_name_pp, lpp):
                     self._layer = layer_name
+                    _lpp_name_cache[cache_key] = layer_name
                     break
 
             else:
@@ -80,8 +118,9 @@ class pin_layout:
         self._recompute_hash()
 
     def _recompute_hash(self):
-        """ Recompute the hash for our hash cache """
-        self._hash = hash(repr(self))
+        """ Invalidate the hash cache (computed lazily on first use, since
+        hashing builds the repr string and most pins are never hashed). """
+        self._hash = None
 
     def __str__(self):
         """ override print function output """
@@ -102,9 +141,11 @@ class pin_layout:
     def __hash__(self):
         """
         Implement the hash function for sets etc. We only return a cached
-        value, that is updated when either 'rect' or 'layer' are changed. This
-        is a major speedup, if pin_layout is used as a key for dicts.
+        value, that is invalidated when either 'rect' or 'layer' are changed.
+        This is a major speedup, if pin_layout is used as a key for dicts.
         """
+        if self._hash is None:
+            self._hash = hash(repr(self))
         return self._hash
 
     def __lt__(self, other):
@@ -375,11 +416,38 @@ class pin_layout:
         return vector(0.5*(self.rect[0].x+self.rect[1].x),
                       self.rect[0].y)
 
+    # Optional tech attributes, resolved once: a failed `from openram.tech
+    # import ...` is not cached by the import system, so retrying it for
+    # every pin write pays a full module search each time.
+    _tech_purposes = None
+
+    @classmethod
+    def _get_tech_purposes(cls):
+        if cls._tech_purposes is None:
+            try:
+                from openram.tech import pin_purpose as global_pin_purpose
+            except ImportError:
+                global_pin_purpose = None
+            try:
+                from openram.tech import label_purpose
+                has_label_purpose = True
+            except ImportError:
+                label_purpose = None
+                has_label_purpose = False
+            try:
+                from openram.tech import layer_override_purpose
+            except Exception:
+                layer_override_purpose = {}
+            cls._tech_purposes = (global_pin_purpose, has_label_purpose,
+                                  label_purpose, layer_override_purpose)
+        return cls._tech_purposes
+
     def gds_write_file(self, newLayout):
         """Writes the pin shape and label to GDS"""
-        debug.info(4, "writing pin (" + str(self.layer) + "):"
-                   + str(self.width()) + "x"
-                   + str(self.height()) + " @ " + str(self.ll()))
+        if debug.is_verbose(4):
+            debug.info(4, "writing pin (" + str(self.layer) + "):"
+                       + str(self.width()) + "x"
+                       + str(self.height()) + " @ " + str(self.ll()))
 
         # Try to use the pin layer if it exists, otherwise
         # use the regular layer
@@ -389,24 +457,19 @@ class pin_layout:
             (pin_layer_num, pin_purpose) = layer[self.layer]
         (layer_num, purpose) = layer[self.layer]
 
-        # Try to use a global pin purpose if it exists,
-        # otherwise, use the regular purpose
-        try:
-            from openram.tech import pin_purpose as global_pin_purpose
-            pin_purpose = global_pin_purpose
-        except ImportError:
-            pass
+        (global_pin_purpose, has_label_purpose,
+         label_purpose, layer_override_purpose) = self._get_tech_purposes()
 
-        try:
-            from openram.tech import label_purpose
-            try:
-                from openram.tech import layer_override_purpose
-                if pin_layer_num in layer_override_purpose:
-                    layer_num = layer_override_purpose[pin_layer_num][0]
-                    label_purpose = layer_override_purpose[pin_layer_num][1]
-            except:
-                pass
-        except ImportError:
+        # Use a global pin purpose if it exists,
+        # otherwise, use the regular purpose
+        if global_pin_purpose is not None:
+            pin_purpose = global_pin_purpose
+
+        if has_label_purpose:
+            if pin_layer_num in layer_override_purpose:
+                layer_num = layer_override_purpose[pin_layer_num][0]
+                label_purpose = layer_override_purpose[pin_layer_num][1]
+        else:
             label_purpose = purpose
 
         newLayout.addBox(layerNumber=layer_num,

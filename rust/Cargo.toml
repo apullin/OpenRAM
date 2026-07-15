@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["openram-core", "openram-py"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
