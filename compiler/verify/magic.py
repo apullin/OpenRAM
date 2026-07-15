@@ -359,6 +359,18 @@ def _parse_drc_results(cell_name, outfile):
     return errors
 
 
+def _remove_stale_verification_artifacts(*paths):
+    """Remove outputs whose presence is used as verification evidence.
+
+    Tool stdout/stderr files are truncated by ``start_script``. Magic's
+    extracted netlist and Netgen's report are not, so remove them explicitly
+    before the producing tool is launched.
+    """
+    for path in paths:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=False):
     """Run DRC check on a cell which is implemented in gds_name."""
 
@@ -366,6 +378,9 @@ def run_drc(cell_name, gds_name, sp_name=None, extract=True, final_verification=
     num_drc_runs += 1
 
     write_drc_script(cell_name, gds_name, extract, final_verification, OPTS.openram_temp, sp_name=sp_name)
+
+    _remove_stale_verification_artifacts(
+        os.path.join(OPTS.openram_temp, cell_name + ".spice"))
 
     (outfile, errfile, resultsfile) = run_script(cell_name, "ext")
 
@@ -436,8 +451,8 @@ def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
     .mag view (whose cell files are lock-contended), so they run fully
     concurrently; Netgen LVS follows the extracted netlist. Verdicts
     are cached keyed on the layout/netlist/scripts/tech content, so
-    re-verifying an unchanged design is free (verify_cache=False
-    disables it; remove ~/.cache/openram/verify to clear). """
+    re-verifying an unchanged design is free when verify_cache=True;
+    remove ~/.cache/openram/verify to clear). """
 
     global num_drc_runs
     global num_lvs_runs
@@ -448,7 +463,7 @@ def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
     write_lvs_script(cell_name, gds_name, sp_name, final_verification)
 
     cache_file = None
-    if getattr(OPTS, "verify_cache", True):
+    if getattr(OPTS, "verify_cache", False):
         import json
         key = _verify_cache_key(cell_name, gds_name, sp_name)
         cache_file = os.path.join(_verify_cache_dir(), key + ".json")
@@ -464,12 +479,35 @@ def run_drc_lvs(cell_name, gds_name, sp_name, final_verification=False):
         except (OSError, ValueError, KeyError):
             pass
 
+    extracted_netlist = os.path.join(OPTS.openram_temp,
+                                     cell_name + ".spice")
+    lvs_report = os.path.join(OPTS.openram_temp,
+                              cell_name + ".lvs.report")
+    _remove_stale_verification_artifacts(extracted_netlist, lvs_report)
+
     drc_handle = start_script(cell_name, "drc")
     extract_handle = start_script(cell_name, "extract")
-    wait_script(extract_handle)
+    extract_error = None
+    try:
+        wait_script(extract_handle)
+    except Exception as error:
+        extract_error = error
+
+    # Always reap the concurrently launched DRC process. If both tools fail,
+    # preserve extraction as the primary error because LVS cannot run without
+    # its output.
+    try:
+        (drc_outfile, drc_errfile,
+         drc_resultsfile) = wait_script(drc_handle)
+    except Exception:
+        if extract_error is None:
+            raise
+
+    if extract_error is not None:
+        raise extract_error
+
     # LVS needs the extracted netlist.
     lvs_handle = start_script(cell_name, "lvs")
-    (drc_outfile, drc_errfile, drc_resultsfile) = wait_script(drc_handle)
     (lvs_outfile, lvs_errfile, lvs_resultsfile) = wait_script(lvs_handle)
 
     drc_errors = _parse_drc_results(cell_name, drc_outfile)
@@ -543,6 +581,9 @@ def run_lvs(cell_name, gds_name, sp_name, final_verification=False, output_path=
         output_path = OPTS.openram_temp
 
     write_lvs_script(cell_name, gds_name, sp_name, final_verification)
+
+    _remove_stale_verification_artifacts(
+        os.path.join(OPTS.openram_temp, cell_name + ".lvs.report"))
 
     (outfile, errfile, resultsfile) = run_script(cell_name, "lvs")
 

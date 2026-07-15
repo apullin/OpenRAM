@@ -132,9 +132,10 @@ class options(optparse.Values):
     check_lvsdrc = False
     # This determines whether LVS and DRC is checked for every submodule.
     inline_lvsdrc = False
-    # Cache DRC/LVS verdicts keyed on the exact layout/netlist/tool
-    # inputs (re-verifying an unchanged design is then free).
-    verify_cache = True
+    # Opt-in cache of DRC/LVS verdicts keyed on the layout/netlist/tool
+    # inputs. Keep this disabled by default until the cache key and stored
+    # verdict format have completed production qualification.
+    verify_cache = False
     # Remove noncritical memory cells for characterization speed-up
     trim_netlist = True
     # Run with extracted parasitics

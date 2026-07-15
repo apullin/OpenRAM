@@ -81,7 +81,7 @@ def wait_script(handle):
         # per script in pipelined DRC/LVS runs.
         time.sleep(0.05)
     assert p.poll() != None, (p.poll(), p)
-    p.wait()
+    returncode = p.wait()
 
     # Kill the tail commands if they haven't finished.
     for t in tails:
@@ -89,7 +89,13 @@ def wait_script(handle):
             t.kill()
         t.wait()
 
-    debug.info(2, "Finished {} with {}".format(scriptpath, p.returncode))
+    debug.info(2, "Finished {} with {}".format(scriptpath, returncode))
+
+    if returncode != 0:
+        debug.warning("Verification script failed with status {}: {} "
+                      "(stdout {}, stderr {})".format(
+                          returncode, scriptpath, outfile, errfile))
+        raise subprocess.CalledProcessError(returncode, scriptpath)
 
     return (outfile, errfile, resultsfile)
 
