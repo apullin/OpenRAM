@@ -334,12 +334,18 @@ def get_tool(tool_type, preferences, default_name=None):
             return (None, "")
 
 
-def read_config(config_file, is_unit_test=False):
+def read_config(config_file, is_unit_test=False, preserve_tool_state=True,
+                log_config=True):
     """
     Read the configuration file that defines a few parameters. The
     config file is just a Python file that defines some config
     options. This will only actually get read the first time. Subsequent
-    reads will just restore the previous copy (ask mrg)
+    reads will just restore the previous copy (ask mrg).
+
+    preserve_tool_state retains executable/tool selections discovered by a
+    preceding compile. Batch preflight disables it so it can compare what each
+    config actually requested. log_config can be disabled for a preflight
+    which must not create an output directory or compile log.
     """
     global OPTS
 
@@ -358,9 +364,12 @@ def read_config(config_file, is_unit_test=False):
     if pristine is None:
         OPTS._pristine_options = dict(OPTS.__dict__)
     else:
-        keep = {k: v for k, v in OPTS.__dict__.items()
-                if k.endswith("_exe") or k in ("spice_name", "mpi_name",
-                                               "hier_seperator")}
+        if preserve_tool_state:
+            keep = {k: v for k, v in OPTS.__dict__.items()
+                    if k.endswith("_exe") or k in ("spice_name", "mpi_name",
+                                                   "hier_seperator")}
+        else:
+            keep = {}
         OPTS.__dict__.clear()
         OPTS.__dict__.update(pristine)
         OPTS._pristine_options = pristine
@@ -390,7 +399,8 @@ def read_config(config_file, is_unit_test=False):
     # Prepend the path to avoid if we are using the example config
     sys.path.insert(0, dir_name)
     # Import the configuration file of which modules to use
-    debug.info(1, "Configuration file is " + config_file + ".py")
+    if log_config:
+        debug.info(1, "Configuration file is " + config_file + ".py")
     # Batch runs read several configs in one process; drop any cached
     # module so a same-named config in another directory is re-read.
     sys.modules.pop(module_name, None)
@@ -413,7 +423,8 @@ def read_config(config_file, is_unit_test=False):
         OPTS.output_path += "/"
     if not OPTS.output_path.startswith('/'):
         OPTS.output_path = os.getcwd() + "/" + OPTS.output_path
-    debug.info(1, "Output saved in " + OPTS.output_path)
+    if log_config:
+        debug.info(1, "Output saved in " + OPTS.output_path)
 
     # Remember if we are running unit tests to reduce output
     OPTS.is_unit_test = is_unit_test
