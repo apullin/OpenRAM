@@ -160,8 +160,22 @@ def supply_route(self, vdd_name="vdd", gnd_name="gnd"):
     ctx.store.convert_blockages()
 
     if self.pin_type in ["top", "bottom", "right", "left"]:
-        self.add_side_pin(vdd_name)
-        self.add_side_pin(gnd_name)
+        for pin_name in [vdd_name, gnd_name]:
+            new_shape, fake_pins = self.add_side_pin(pin_name,
+                                                     self.pin_type)
+            ll, ur = new_shape.rect
+            layer = self.get_layer(self.pin_type in ["left", "right"])
+            new_pin = graph_shape(name=pin_name,
+                                  rect=[ll, ur],
+                                  layer_name_pp=layer)
+
+            # Match the Python router: publish the exported rail, add fake
+            # MST targets along it, and keep the rail itself out of routing.
+            self.new_pins[pin_name] = [new_pin]
+            self.pins[pin_name].update(fake_pins)
+            self.fake_pins.extend(fake_pins)
+            blockage = self.inflate_shape(new_pin)
+            ctx.store.append_blockage(ctx.convert(blockage))
     elif self.pin_type == "ring":
         sink = lambda s: ctx.store.append_blockage(ctx.convert(s))
         self.add_ring_pin(vdd_name, blockage_sink=sink)
